@@ -6,15 +6,23 @@
 EPUB 解析服务
 
 解析 EPUB 文件，提取元数据和章节内容。
+支持：
+- 元数据提取（书名、作者、封面、出版信息等）
+- 章节结构提取
+- DRM 检测
+- 文本清洗
 """
 
 import logging
 import os
+import zipfile
 from typing import Dict, List, Any, Optional
 from io import BytesIO
+from datetime import datetime
 
 import ebooklib
 from ebooklib import epub
+from ebooklib import ITEM_DOCUMENT, ITEM_IMAGE
 from bs4 import BeautifulSoup
 
 from core.exceptions import EPUBParseError
@@ -28,11 +36,21 @@ class EPUBParserService:
     EPUB 解析服务
 
     提供 EPUB 文件的解析功能：
-    - 元数据提取
+    - 元数据提取（书名、作者、封面、出版信息、ISBN等）
     - 章节内容提取
     - 封面图片提取
     - DRM 检测
+    - 文件格式校验
     """
+
+    # DRM 相关文件名检测
+    DRM_PATTERNS = [
+        "encryption.xml",
+        "license.xml",
+        ".adept",
+        ".enc",
+        "drm",
+    ]
 
     def __init__(self):
         self.logger = logging.getLogger("audiobook.epub_parser")
@@ -54,6 +72,10 @@ class EPUBParserService:
         if not os.path.exists(file_path):
             raise EPUBParseError(f"文件不存在: {file_path}")
 
+        # 校验文件格式
+        if not self._validate_epub_format(file_path):
+            raise EPUBParseError("无效的 EPUB 文件格式")
+
         try:
             # 检测 DRM
             if self._is_drm_protected(file_path):
@@ -68,9 +90,14 @@ class EPUBParserService:
             # 提取章节
             chapters = self._extract_chapters(book)
 
+            # 计算基本信息
+            total_chars = sum(len(ch.get("content", "")) for ch in chapters)
+            total_words = sum(len(ch.get("content", "").replace("\n", "")) for ch in chapters)
+
             self.logger.info(
                 f"EPUB 解析完成: {metadata.get('title')}, "
-                f"章节数: {len(chapters)}"
+                f"章节数: {len(chapters)}, "
+                f"总字符: {total_chars}"
             )
 
             return {
@@ -79,11 +106,19 @@ class EPUBParserService:
                 "language": metadata.get("language"),
                 "description": metadata.get("description"),
                 "publisher": metadata.get("publisher"),
+                "isbn": metadata.get("isbn"),
+                "publish_date": metadata.get("publish_date"),
                 "cover_image": metadata.get("cover_image"),
+                "cover_image_type": metadata.get("cover_image_type"),
                 "chapters": chapters,
                 "chapter_count": len(chapters),
+                "total_characters": total_chars,
+                "total_words": total_words,
+                "file_path": file_path,
             }
 
+        except EPUBParseError:
+            raise
         except Exception as e:
             self.logger.error(f"EPUB 解析失败: {file_path} - {e}")
             raise EPUBParseError(f"EPUB 解析失败: {e}")
@@ -100,10 +135,15 @@ class EPUBParserService:
             dict: 解析结果
         """
         try:
-            book = epub.read_epub(BytesIO(data))
+            # 校验格式
+            if not self._validate_epub_bytes(data):
+                raise EPUBParseError("无效的 EPUB 文件格式")
 
             # 检测 DRM
-            # 注意：ebooklib 可能无法检测所有 DRM
+            if self._is_drm_protected_bytes(data):
+                raise EPUBParseError("EPUB 文件受 DRM 保护，无法解析")
+
+            book = epub.read_epub(BytesIO(data))
 
             # 提取元数据
             metadata = self._extract_metadata(book)
@@ -111,20 +151,90 @@ class EPUBParserService:
             # 提取章节
             chapters = self._extract_chapters(book)
 
+            # 计算基本信息
+            total_chars = sum(len(ch.get("content", "")) for ch in chapters)
+            total_words = sum(len(ch.get("content", "").replace("\n", "")) for ch in chapters)
+
             return {
                 "title": metadata.get("title"),
                 "author": metadata.get("author"),
                 "language": metadata.get("language"),
                 "description": metadata.get("description"),
                 "publisher": metadata.get("publisher"),
+                "isbn": metadata.get("isbn"),
+                "publish_date": metadata.get("publish_date"),
                 "cover_image": metadata.get("cover_image"),
+                "cover_image_type": metadata.get("cover_image_type"),
                 "chapters": chapters,
                 "chapter_count": len(chapters),
+                "total_characters": total_chars,
+                "total_words": total_words,
             }
 
+        except EPUBParseError:
+            raise
         except Exception as e:
             self.logger.error(f"EPUB 解析失败 - {e}")
             raise EPUBParseError(f"EPUB 解析失败: {e}")
+
+    def _validate_epub_format(self, file_path: str) -> bool:
+        """
+        验证 EPUB 文件格式
+
+        Args:
+            file_path: 文件路径
+
+        Returns:
+            bool: 是否是有效的 EPUB 文件
+        """
+        try:
+            # 必须是 zip 文件
+            if not zipfile.is_zipfile(file_path):
+                return False
+
+            # 必须包含 mimetype 文件
+            with zipfile.ZipFile(file_path, 'r') as zf:
+                if "mimetype" not in zf.namelist():
+                    return False
+
+                # mimetype 内容必须是 application/epub+zip
+                mimetype = zf.read("mimetype").decode("utf-8").strip()
+                if mimetype != "application/epub+zip":
+                    return False
+
+            return True
+
+        except Exception as e:
+            self.logger.warning(f"EPUB 格式校验失败: {e}")
+            return False
+
+    def _validate_epub_bytes(self, data: bytes) -> bool:
+        """
+        验证 EPUB 字节数据格式
+
+        Args:
+            data: EPUB 文件字节数据
+
+        Returns:
+            bool: 是否是有效的 EPUB 文件
+        """
+        try:
+            if not zipfile.is_zipfile(BytesIO(data)):
+                return False
+
+            with zipfile.ZipFile(BytesIO(data), 'r') as zf:
+                if "mimetype" not in zf.namelist():
+                    return False
+
+                mimetype = zf.read("mimetype").decode("utf-8").strip()
+                if mimetype != "application/epub+zip":
+                    return False
+
+            return True
+
+        except Exception as e:
+            self.logger.warning(f"EPUB 格式校验失败: {e}")
+            return False
 
     def _is_drm_protected(self, file_path: str) -> bool:
         """
@@ -136,9 +246,50 @@ class EPUBParserService:
         Returns:
             bool: 是否受保护
         """
-        # ebooklib 无法检测 DRM，这里作为预留接口
-        # 实际项目中可以使用 adept 等工具检测
-        return False
+        try:
+            with zipfile.ZipFile(file_path, 'r') as zf:
+                filenames = zf.namelist()
+
+                # 检查是否包含 DRM 相关文件
+                for filename in filenames:
+                    filename_lower = filename.lower()
+                    for pattern in self.DRM_PATTERNS:
+                        if pattern in filename_lower:
+                            self.logger.warning(f"检测到 DRM 相关文件: {filename}")
+                            return True
+
+            return False
+
+        except Exception as e:
+            self.logger.warning(f"DRM 检测失败: {e}")
+            return False
+
+    def _is_drm_protected_bytes(self, data: bytes) -> bool:
+        """
+        检测 EPUB 字节数据是否受 DRM 保护
+
+        Args:
+            data: EPUB 文件字节数据
+
+        Returns:
+            bool: 是否受保护
+        """
+        try:
+            with zipfile.ZipFile(BytesIO(data), 'r') as zf:
+                filenames = zf.namelist()
+
+                for filename in filenames:
+                    filename_lower = filename.lower()
+                    for pattern in self.DRM_PATTERNS:
+                        if pattern in filename_lower:
+                            self.logger.warning(f"检测到 DRM 相关文件: {filename}")
+                            return True
+
+            return False
+
+        except Exception as e:
+            self.logger.warning(f"DRM 检测失败: {e}")
+            return False
 
     def _extract_metadata(self, book: epub.EpubBook) -> Dict[str, Any]:
         """
@@ -177,12 +328,37 @@ class EPUBParserService:
         if descriptions:
             metadata["description"] = descriptions[0][0] if descriptions[0] else None
 
+        # 提取 ISBN
+        identifiers = book.get_metadata("DC", "identifier")
+        for identifier in identifiers:
+            if identifier[0]:
+                id_value = identifier[0]
+                id_attrs = identifier[1] if len(identifier) > 1 else {}
+                # 检查是否包含 ISBN
+                if "isbn" in id_value.lower():
+                    metadata["isbn"] = id_value
+                    break
+                # 检查 opf:scheme
+                if isinstance(id_attrs, dict) and id_attrs.get("opf:scheme", "").upper() == "ISBN":
+                    metadata["isbn"] = id_value
+                    break
+        metadata.setdefault("isbn", None)
+
+        # 提取发布日期
+        dates = book.get_metadata("DC", "date")
+        if dates:
+            metadata["publish_date"] = dates[0][0] if dates[0] else None
+        else:
+            metadata["publish_date"] = None
+
         # 提取封面
-        metadata["cover_image"] = self._extract_cover(book)
+        cover_result = self._extract_cover(book)
+        metadata["cover_image"] = cover_result.get("image_data")
+        metadata["cover_image_type"] = cover_result.get("image_type")
 
         return metadata
 
-    def _extract_cover(self, book: epub.EpubBook) -> Optional[bytes]:
+    def _extract_cover(self, book: epub.EpubBook) -> Dict[str, Any]:
         """
         提取封面图片
 
@@ -190,14 +366,85 @@ class EPUBParserService:
             book: EpubBook 对象
 
         Returns:
-            bytes: 封面图片数据
+            dict: 包含 image_data 和 image_type 的字典
         """
-        for item in book.get_items():
-            if item.get_type() == ebooklib.ITEM_TYPE_IMAGE:
-                if "cover" in item.get_name().lower():
-                    return item.get_content()
+        result = {"image_data": None, "image_type": None}
 
-        return None
+        # 方法1：通过 manifest 中的 properties="cover-image" 查找
+        for item in book.get_items():
+            if item.get_type() == ITEM_IMAGE:
+                item_props = item.properties if hasattr(item, 'properties') else []
+                if 'cover-image' in item_props:
+                    content = item.get_content()
+                    result["image_data"] = content
+                    result["image_type"] = self._get_image_type(content, item.get_name())
+                    return result
+
+        # 方法2：通过文件名包含 cover 查找
+        for item in book.get_items():
+            if item.get_type() == ITEM_IMAGE:
+                name = item.get_name().lower()
+                if "cover" in name:
+                    content = item.get_content()
+                    result["image_data"] = content
+                    result["image_type"] = self._get_image_type(content, item.get_name())
+                    return result
+
+        # 方法3：查找 metadata 中的 cover 定义
+        try:
+            cover_meta = book.get_metadata("meta", "cover")
+            if cover_meta:
+                cover_id = cover_meta[0][0] if cover_meta and cover_meta[0] else None
+                if cover_id:
+                    cover_item = book.get_item_with_id(cover_id)
+                    if cover_item:
+                        content = cover_item.get_content()
+                        result["image_data"] = content
+                        result["image_type"] = self._get_image_type(content, cover_item.get_name())
+                        return result
+        except (KeyError, Exception):
+            pass
+
+        # 方法4：查找第一个图片（通常是封面）
+        for item in book.get_items():
+            if item.get_type() == ITEM_IMAGE:
+                content = item.get_content()
+                result["image_data"] = content
+                result["image_type"] = self._get_image_type(content, item.get_name())
+                return result
+
+        return result
+
+    def _get_image_type(self, data: bytes, filename: str) -> Optional[str]:
+        """
+        根据文件内容或文件名判断图片类型
+
+        Args:
+            data: 图片数据
+            filename: 文件名
+
+        Returns:
+            str: 图片类型 (image/jpeg, image/png, image/webp)
+        """
+        # 从文件名判断
+        if filename.lower().endswith(".jpg") or filename.lower().endswith(".jpeg"):
+            return "image/jpeg"
+        elif filename.lower().endswith(".png"):
+            return "image/png"
+        elif filename.lower().endswith(".webp"):
+            return "image/webp"
+        elif filename.lower().endswith(".gif"):
+            return "image/gif"
+
+        # 从文件头判断
+        if data[:2] == b'\xff\xd8':
+            return "image/jpeg"
+        elif data[:8] == b'\x89PNG\r\n\x1a\n':
+            return "image/png"
+        elif data[:4] == b'RIFF' and data[8:12] == b'WEBP':
+            return "image/webp"
+
+        return "image/jpeg"  # 默认假设为 JPEG
 
     def _extract_chapters(self, book: epub.EpubBook) -> List[Dict[str, Any]]:
         """
@@ -214,13 +461,20 @@ class EPUBParserService:
         # 获取所有文档项
         docs = [
             item for item in book.get_items()
-            if item.get_type() == ebooklib.ITEM_TYPE_DOCUMENT
+            if item.get_type() == ITEM_DOCUMENT
         ]
 
         for index, doc in enumerate(docs):
             try:
                 content = doc.get_content()
-                soup = BeautifulSoup(content, "lxml")
+                # 优先使用 xml 解析器（适合 XHTML），如果失败则使用 lxml
+                try:
+                    soup = BeautifulSoup(content, "xml")
+                    # 检查是否解析成功
+                    if soup.find() is None:
+                        raise ValueError("XML parser returned empty result")
+                except Exception:
+                    soup = BeautifulSoup(content, "lxml")
 
                 # 提取文本
                 text = soup.get_text(separator="\n", strip=True)
