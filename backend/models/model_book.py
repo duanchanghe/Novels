@@ -83,6 +83,18 @@ class Book(Base):
     cover_image_url = Column(String(1000), nullable=True, comment="封面图URL")
     cover_image_path = Column(String(500), nullable=True, comment="封面图存储路径")
 
+    @property
+    def cover_image(self) -> Optional[bytes]:
+        """从 MinIO 获取封面图片字节数据"""
+        if self.cover_image_path:
+            try:
+                from services.svc_minio_storage import get_storage_service
+                storage = get_storage_service()
+                return storage.download_file(settings.MINIO_BUCKET_EPUB, self.cover_image_path)
+            except Exception:
+                return None
+        return None
+
     # 文件信息
     file_name = Column(String(500), nullable=False, comment="原始文件名")
     file_size = Column(BigInteger, nullable=True, comment="文件大小（字节）")
@@ -108,6 +120,12 @@ class Book(Base):
     total_chapters = Column(Integer, default=0, comment="总章节数")
     processed_chapters = Column(Integer, default=0, comment="已处理章节数")
     total_duration = Column(BigInteger, default=0, comment="总音频时长（秒）")
+
+    # 完整有声书信息
+    full_audio_path = Column(String(1000), nullable=True, comment="完整有声书存储路径")
+    full_audio_duration = Column(Integer, nullable=True, comment="完整有声书时长（秒）")
+    full_audio_size = Column(BigInteger, nullable=True, comment="完整有声书大小（字节）")
+    full_audio_format = Column(String(20), default="m4b", comment="完整有声书格式")
 
     # 自动发布配置
     auto_publish_enabled = Column(Boolean, default=False, comment="是否启用自动发布")
@@ -184,6 +202,10 @@ class Book(Base):
             "processed_chapters": self.processed_chapters,
             "progress_percentage": self.progress_percentage,
             "total_duration": self.total_duration,
+            "full_audio_path": self.full_audio_path,
+            "full_audio_duration": self.full_audio_duration,
+            "full_audio_size": self.full_audio_size,
+            "full_audio_format": self.full_audio_format,
             "auto_publish_enabled": self.auto_publish_enabled,
             "error_message": self.error_message,
             "created_at": self.created_at.isoformat() if self.created_at else None,
