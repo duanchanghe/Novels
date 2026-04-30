@@ -1,0 +1,151 @@
+# ===========================================
+# AI Audiobook Workshop - Docker Compose
+# ===========================================
+
+services:
+  # ---------- 后端 API 服务 ----------
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: audiobook-backend
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    environment:
+      - APP_NAME=${APP_NAME}
+      - APP_ENV=${APP_ENV}
+      - APP_DEBUG=${APP_DEBUG}
+      - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_SECURE=false
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY}
+      - MINIMAX_GROUP_ID=${MINIMAX_GROUP_ID}
+    volumes:
+      - ./backend:/app
+      - ./books/incoming:/books/incoming
+      - ./data/incoming:/data/incoming
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+
+  # ---------- Celery Worker ----------
+  celery-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: audiobook-celery-worker
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=4
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - MINIMAX_API_KEY=${MINIMAX_API_KEY}
+      - WATCH_DIR=${WATCH_DIR}
+    volumes:
+      - ./books:/books
+      - ./data:/data
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+
+  # ---------- Celery Beat (定时任务调度器) ----------
+  celery-beat:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: audiobook-celery-beat
+    command: celery -A tasks.celery_app beat --loglevel=info
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+    volumes:
+      - ./books:/books
+    depends_on:
+      - redis
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+
+  # ---------- PostgreSQL 数据库 ----------
+  postgres:
+    image: postgres:16-alpine
+    container_name: audiobook-postgres
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+
+  # ---------- Redis 缓存与消息队列 ----------
+  redis:
+    image: redis:7-alpine
+    container_name: audiobook-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+
+  # ---------- MinIO 对象存储 ----------
+  minio:
+    image: minio/minio:latest
+    container_name: audiobook-minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+    volumes:
+      - ./data/minio:/data
+    ports:
+      - "9000:9000"   # API 端口
+      - "9001:9001"   # Console 端口
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+
+  # ---------- 前端 Web 服务 (开发模式) ----------
+  # 前端暂时禁用，等待实现 Next.js 页面
+  # frontend:
+  #   build:
+  #     context: .
+  #     dockerfile: frontend/Dockerfile
+  #   container_name: audiobook-frontend
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     - NEXT_PUBLIC_API_URL=http://backend:8000
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+  #     - /app/.next
+  #   depends_on:
+  #     - backend
+  #   restart: unless-stopped
+  #   networks:
+  #     - audiobook-network
+
+# ---------- 网络配置 ----------
+networks:
+  audiobook-network:
+    driver: bridge
