@@ -1,0 +1,178 @@
+# ===========================================
+# Prometheus 告警规则
+# ===========================================
+
+groups:
+  # API 服务告警
+  - name: api_alerts
+    interval: 30s
+    rules:
+      # API 响应时间过长
+      - alert: HighAPIResponseTime
+        expr: histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le, handler)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "API 响应时间过长"
+          description: "API 95%响应时间超过 2 秒，当前值: {{ $value }}秒"
+
+      # API 错误率过高
+      - alert: HighAPIErrorRate
+        expr: sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m])) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API 错误率过高"
+          description: "API 5xx 错误率超过 5%，当前值: {{ $value | humanizePercentage }}"
+
+  # TTS 服务告警
+  - name: tts_alerts
+    interval: 30s
+    rules:
+      # MiniMax API 错误率过高
+      - alert: HighMiniMaxErrorRate
+        expr: sum(rate(minimax_api_errors_total[5m])) / sum(rate(minimax_api_requests_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MiniMax TTS API 错误率过高"
+          description: "MiniMax API 错误率超过 10%，当前值: {{ $value | humanizePercentage }}"
+
+      # MiniMax API 响应超时
+      - alert: MiniMaxAPITimeout
+        expr: histogram_quantile(0.95, sum(rate(minimax_api_duration_seconds_bucket{status="timeout"}[5m])) by (le)) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MiniMax API 响应超时"
+          description: "MiniMax API 超时率超过 5%，当前值: {{ $value | humanizePercentage }}"
+
+      # DeepSeek API 错误率过高
+      - alert: HighDeepSeekErrorRate
+        expr: sum(rate(deepseek_api_errors_total[5m])) / sum(rate(deepseek_api_requests_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "DeepSeek API 错误率过高"
+          description: "DeepSeek API 错误率超过 10%，当前值: {{ $value | humanizePercentage }}"
+
+  # 任务队列告警
+  - name: queue_alerts
+    interval: 30s
+    rules:
+      # Celery 队列积压
+      - alert: CeleryQueueBacklog
+        expr: celery_queue_length > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Celery 任务队列积压"
+          description: "Celery 队列积压超过 100 个任务，当前值: {{ $value }}"
+
+      # Celery Worker 离线
+      - alert: CeleryWorkerDown
+        expr: celery_workers_online < 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Celery Worker 离线"
+          description: "没有在线的 Celery Worker"
+
+  # 存储告警
+  - name: storage_alerts
+    interval: 60s
+    rules:
+      # MinIO 不可用
+      - alert: MinIOUnavailable
+        expr: up{job="minio"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MinIO 存储服务不可用"
+          description: "MinIO 服务已离线超过 2 分钟"
+
+      # MinIO 存储使用率过高
+      - alert: MinIOHighStorageUsage
+        expr: minio_cluster_capacity_usage_percentage > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "MinIO 存储使用率过高"
+          description: "MinIO 存储使用率超过 80%，当前值: {{ $value }}%"
+
+      # PostgreSQL 连接池耗尽
+      - alert: PostgresConnectionPoolExhausted
+        expr: sum(pg_pool_available_connections{type="total"}) < 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL 连接池即将耗尽"
+          description: "可用连接数少于 5 个"
+
+  # 系统资源告警
+  - name: system_alerts
+    interval: 30s
+    rules:
+      # CPU 使用率过高
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "CPU 使用率过高"
+          description: "CPU 使用率超过 80%，当前值: {{ $value }}%"
+
+      # 内存使用率过高
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "内存使用率过高"
+          description: "内存使用率超过 85%，当前值: {{ $value }}%"
+
+      # 磁盘使用率过高
+      - alert: HighDiskUsage
+        expr: (1 - (node_filesystem_avail_bytes / node_filesystem_size_bytes)) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "磁盘使用率过高"
+          description: "磁盘使用率超过 80%，当前值: {{ $value }}%"
+
+  # 业务告警
+  - name: business_alerts
+    interval: 60s
+    rules:
+      # API Key 余额不足
+      - alert: APIKeyBalanceLow
+        expr: api_key_balance_percentage < 10
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: "API Key 余额不足"
+          description: "{{ $labels.provider }} API Key 余额低于 10%，当前值: {{ $value }}%"
+
+      # 处理失败率过高
+      - alert: HighProcessingFailureRate
+        expr: rate(book_processing_failed_total[1h]) / rate(book_processing_total[1h]) > 0.1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "书籍处理失败率过高"
+          description: "书籍处理失败率超过 10%，当前值: {{ $value | humanizePercentage }}"

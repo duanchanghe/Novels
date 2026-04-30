@@ -1,0 +1,79 @@
+# ===========================================
+# Alertmanager 配置
+# ===========================================
+
+global:
+  resolve_timeout: 5m
+  smtp_smarthost: 'smtp.example.com:587'
+  smtp_from: 'alertmanager@example.com'
+  smtp_auth_username: 'alertmanager'
+  smtp_auth_password: '${SMTP_PASSWORD}'
+
+# 路由配置
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: 'default'
+  routes:
+    # 严重告警直接通知
+    - match:
+        severity: critical
+      receiver: 'critical'
+      group_wait: 10s
+    
+    # 警告告警普通通知
+    - match:
+        severity: warning
+      receiver: 'warning'
+    
+    # API 相关告警
+    - match:
+        service: api
+      receiver: 'api-team'
+    
+    # 存储相关告警
+    - match:
+        service: storage
+      receiver: 'infra-team'
+
+# 接收者配置
+receivers:
+  - name: 'default'
+    webhook_configs:
+      - url: 'http://webhook:5001/alert'
+        send_resolved: true
+
+  - name: 'critical'
+    webhook_configs:
+      - url: 'http://webhook:5001/critical'
+        send_resolved: true
+    # 严重告警可以添加更多通知方式
+    # - email_configs:
+    #     - to: 'oncall@example.com'
+    #       headers:
+    #         subject: '[CRITICAL] {{ .GroupLabels.alertname }}'
+
+  - name: 'warning'
+    email_configs:
+      - to: 'team@example.com'
+        headers:
+          subject: '[WARNING] {{ .GroupLabels.alertname }}'
+
+  - name: 'api-team'
+    webhook_configs:
+      - url: 'http://webhook:5001/api'
+
+  - name: 'infra-team'
+    webhook_configs:
+      - url: 'http://webhook:5001/infra'
+
+# 抑制规则
+inhibit_rules:
+  # 阻止重复告警
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']

@@ -1,0 +1,77 @@
+# ===========================================
+# Prometheus 配置
+# ===========================================
+
+global:
+  # 全局配置
+  scrape_interval: 15s  # 抓取间隔
+  evaluation_interval: 15s  # 评估间隔
+  external_labels:
+    cluster: 'ai-audiobook'
+    environment: '${ENVIRONMENT:-development}'
+
+# Alertmanager 配置
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+# 规则文件
+rule_files:
+  - 'alerts/*.yml'
+
+# 抓取配置
+scrape_configs:
+  # Prometheus 自身监控
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+
+  # FastAPI 后端监控
+  - job_name: 'backend'
+    static_configs:
+      - targets: ['backend:8000']
+        labels:
+          service: 'backend-api'
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Redis 监控
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:6379']
+        labels:
+          service: 'redis'
+
+  # PostgreSQL 监控
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+        labels:
+          service: 'postgres'
+
+  # MinIO 监控
+  - job_name: 'minio'
+    static_configs:
+      - targets: ['minio:9000']
+        labels:
+          service: 'minio'
+    metrics_path: '/minio/v2/metrics/cluster'
+
+  # Celery Worker 监控
+  - job_name: 'celery'
+    static_configs:
+      - targets: ['celery-worker:8790']
+        labels:
+          service: 'celery'
+
+# 远程写入配置（可选，用于长期存储）
+remote_write:
+  - url: 'http://remote-storage:9201/write'
+    queue_config:
+      capacity: 10000
+      max_shards: 5
+      max_samples_per_send: 500

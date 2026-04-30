@@ -8,14 +8,12 @@
 提供音色配置查询接口。
 """
 
-from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 
-from core.database import get_db
+from core.database import get_db_context
 from services.svc_voice_mapper import VoiceMapperService
 from services.svc_minimax_tts import MiniMaxTTSService
+from services.svc_deepseek_analyzer import DeepSeekAnalyzerService
 
 
 router = APIRouter(prefix="/voices", tags=["音色管理"])
@@ -33,6 +31,18 @@ async def list_voices():
     return tts_service.get_available_voices()
 
 
+@router.get("/emotions")
+async def list_emotions():
+    """
+    获取支持的情感列表
+
+    Returns:
+        list: 情感列表（含强度级别）
+    """
+    tts_service = MiniMaxTTSService()
+    return tts_service.get_emotion_list()
+
+
 @router.get("/roles")
 async def get_role_mappings():
     """
@@ -44,8 +54,21 @@ async def get_role_mappings():
     mapper = VoiceMapperService()
     return {
         "roles": mapper.get_role_mappings(),
-        "emotions": mapper.emotion_map,
+        "emotions": mapper.get_emotion_mappings(),
+        "categories": mapper.get_role_categories(),
     }
+
+
+@router.get("/roles/categories")
+async def get_role_categories():
+    """
+    获取角色分类列表
+
+    Returns:
+        list: 角色分类
+    """
+    mapper = VoiceMapperService()
+    return mapper.get_role_categories()
 
 
 @router.get("/recommend/{book_id}")
@@ -59,8 +82,6 @@ async def recommend_voices(book_id: int):
     Returns:
         dict: 推荐配置
     """
-    from core.database import get_db_context
-
     with get_db_context() as db:
         from models import Book, Chapter
 
@@ -95,3 +116,40 @@ async def recommend_voices(book_id: int):
             "recommendations": recommendations,
             "available_voices": available_voices,
         }
+
+
+@router.get("/status/rate-limit")
+async def get_rate_limit_status():
+    """
+    获取 TTS 速率限制状态
+
+    Returns:
+        dict: 限流器状态
+    """
+    tts_service = MiniMaxTTSService()
+    return tts_service.get_rate_limit_status()
+
+
+@router.get("/analyzer/cache")
+async def get_analyzer_cache_stats():
+    """
+    获取分析器缓存统计
+
+    Returns:
+        dict: 缓存统计信息
+    """
+    analyzer = DeepSeekAnalyzerService()
+    return analyzer.get_cache_stats()
+
+
+@router.post("/analyzer/cache/clear")
+async def clear_analyzer_cache():
+    """
+    清空分析器缓存
+
+    Returns:
+        dict: 操作结果
+    """
+    analyzer = DeepSeekAnalyzerService()
+    analyzer.clear_cache()
+    return {"message": "缓存已清空"}

@@ -1,11 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
   reactStrictMode: true,
-  images: {
-    domains: ['localhost', 'minio'],
-    unoptimized: true,
-  },
+  output: 'standalone',
+  transpilePackages: [],
   env: {
     NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
   },
@@ -13,7 +10,7 @@ const nextConfig = {
     return [
       {
         source: '/api/:path*',
-        destination: `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/:path*`,
+        destination: `${process.env.API_URL || 'http://localhost:8000'}/api/:path*`,
       },
     ];
   },

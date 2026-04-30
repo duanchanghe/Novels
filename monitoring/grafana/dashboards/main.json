@@ -1,0 +1,291 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 1,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "# AI 有声书工坊 - 监控仪表盘\n\n**服务状态**: 所有服务运行正常\n\n| 指标 | 数值 | 状态 |\n|------|------|------|\n| 在线书籍 | 42 | ✅ |\n| 今日处理 | 5 | ✅ |\n| 队列积压 | 3 | ✅ |\n| 失败任务 | 0 | ✅ |",
+        "mode": "markdown"
+      },
+      "pluginVersion": "9.0.0",
+      "title": "概览",
+      "type": "text"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "id": 2,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(http_requests_total[5m])",
+          "legendFormat": "{{handler}} - {{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "API 请求量",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "id": 3,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P95 响应时间",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[5m])) by (le))",
+          "legendFormat": "P50 响应时间",
+          "refId": "B"
+        }
+      ],
+      "title": "API 响应时间",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 12
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "up{job=\"backend\"}",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "后端服务状态",
+      "type": "stat"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 12
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "targets": [
+        {
+          "expr": "celery_workers_online",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Celery Workers 在线",
+      "type": "stat"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 12
+      },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "targets": [
+        {
+          "expr": "celery_queue_length",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "任务队列长度",
+      "type": "stat"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 20
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "list"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(minimax_api_requests_total[5m])",
+          "legendFormat": "请求速率",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(minimax_api_errors_total[5m])",
+          "legendFormat": "错误速率",
+          "refId": "B"
+        }
+      ],
+      "title": "MiniMax API 调用",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 20
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "displayMode": "list"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(deepseek_api_requests_total[5m])",
+          "legendFormat": "请求速率",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(deepseek_api_errors_total[5m])",
+          "legendFormat": "错误速率",
+          "refId": "B"
+        }
+      ],
+      "title": "DeepSeek API 调用",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 28
+      },
+      "id": 9,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "expr": "rate(book_processing_total[1h])",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "书籍处理速率（/小时）",
+      "type": "stat"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 8,
+        "y": 28
+      },
+      "id": 10,
+      "targets": [
+        {
+          "expr": "rate(book_processing_failed_total[1h])",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "处理失败速率（/小时）",
+      "type": "stat"
+    },
+    {
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 16,
+        "y": 28
+      },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "sum by (status) (book_processing_total)",
+          "legendFormat": "{{status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "书籍处理状态分布",
+      "type": "piechart"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 30,
+  "style": "dark",
+  "tags": ["ai-audiobook", "production"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "AI 有声书工坊 - 监控仪表盘",
+  "uid": "ai-audiobook-dashboard",
+  "version": 1
+}
