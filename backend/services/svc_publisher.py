@@ -306,6 +306,8 @@ class PublisherService:
         "self_hosted": SelfHostedPublisher,
         "ximalaya": XimalayaPublisher,
         "qingting": QingtingPublisher,
+        "lizhi": QingtingPublisher,  # 荔枝 FM 使用与蜻蜓 FM 相同的接口结构
+        "custom": SelfHostedPublisher,  # 自定义平台使用自建平台模式
     }
 
     def __init__(self):
@@ -352,7 +354,7 @@ class PublisherService:
         max_retries: int = 3,
     ) -> Dict[str, Any]:
         """
-        发布书籍到指定渠道
+        发布书籍到指定渠道（异步版本）
 
         Args:
             book_id: 书籍 ID
@@ -388,6 +390,43 @@ class PublisherService:
 
         # 记录失败
         raise PublishError(f"发布失败（已重试 {max_retries} 次）: {last_error}")
+
+    def publish_book_sync(
+        self,
+        book_id: int,
+        channel_id: int,
+        auto_retry: bool = True,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
+        """
+        发布书籍到指定渠道（同步版本）
+
+        用于 Celery 任务中调用异步方法。
+
+        Args:
+            book_id: 书籍 ID
+            channel_id: 渠道 ID
+            auto_retry: 是否自动重试
+            max_retries: 最大重试次数
+
+        Returns:
+            dict: 发布结果
+        """
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(
+                self.publish_book(book_id, channel_id, auto_retry, max_retries)
+            )
+            result["success"] = True
+            return result
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+            }
+        finally:
+            loop.close()
 
     async def _do_publish(
         self,

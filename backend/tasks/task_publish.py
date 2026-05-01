@@ -9,7 +9,7 @@
 """
 
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from celery import Task
 
@@ -51,14 +51,18 @@ def publish_to_channel(
     """
     logger.info(f"开始发布书籍到渠道: book_id={book_id}, channel_id={channel_id}")
 
-    with get_db_context() as db:
-        from models import Book, PublishChannel, PublishRecord, BookStatus, PublishStatus
-        from datetime import datetime
+    # 使用单一数据库会话确保数据一致性
+    from models import Book, PublishChannel, PublishRecord, BookStatus, PublishStatus
+    from services.svc_publisher import PublisherService
+    from datetime import datetime
 
+    with get_db_context() as db:
+        # 获取书籍
         book = db.query(Book).filter(Book.id == book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {book_id}")
 
+        # 获取渠道
         channel = db.query(PublishChannel).filter(PublishChannel.id == channel_id).first()
         if not channel:
             raise ValueError(f"发布渠道不存在: {channel_id}")
@@ -73,6 +77,7 @@ def publish_to_channel(
             .first()
         )
 
+        is_new_record = False
         if not record:
             record = PublishRecord(
                 book_id=book_id,
@@ -81,53 +86,73 @@ def publish_to_channel(
                 total_chapters=book.total_chapters,
             )
             db.add(record)
+            db.flush()  # 确保获取 ID
 
+        # 更新状态为准备中
+        record.status = PublishStatus.PREPARING
+        db.commit()
+
+        # 保存 record_id 以便后续查询
+        record_id = record.id
+
+    # 执行发布（在单独的上下文中，但使用相同的记录 ID）
+    publisher = PublisherService()
+
+    try:
+        result = publisher.publish_book_sync(book_id, channel_id)
+
+        # 更新发布记录
+        with get_db_context() as db:
+            record = db.query(PublishRecord).filter(PublishRecord.id == record_id).first()
+            if record:
+                record.status = PublishStatus.DONE if result.get("success") else PublishStatus.FAILED
+                record.external_album_id = result.get("album_id")
+                record.external_album_url = result.get("album_url")
+                record.published_at = datetime.utcnow()
+                record.result_details = result
+                db.commit()
+
+            # 更新渠道统计
+            channel = db.query(PublishChannel).filter(PublishChannel.id == channel_id).first()
+            if channel:
+                channel.total_published += 1
+                if result.get("success"):
+                    channel.success_count += 1
+                else:
+                    channel.failure_count += 1
+                channel.last_published_at = datetime.utcnow()
+                db.commit()
+
+        logger.info(f"书籍发布成功: book_id={book_id}, channel_id={channel_id}")
+        return {
+            "book_id": book_id,
+            "channel_id": channel_id,
+            "album_id": result.get("album_id"),
+            "success": result.get("success", True),
+        }
+
+    except Exception as e:
+        logger.error(f"书籍发布失败: book_id={book_id}, channel_id={channel_id} - {e}")
+
+        # 更新记录为失败状态
         try:
-            # 更新状态
-            record.status = PublishStatus.PREPARING
-            db.commit()
+            with get_db_context() as db:
+                record = db.query(PublishRecord).filter(PublishRecord.id == record_id).first()
+                if record:
+                    record.status = PublishStatus.FAILED
+                    record.error_message = str(e)
+                    record.retry_count = (record.retry_count or 0) + 1
+                    db.commit()
 
-            # 执行发布
-            from services.svc_publisher import PublisherService
+                # 更新渠道统计
+                channel = db.query(PublishChannel).filter(PublishChannel.id == channel_id).first()
+                if channel:
+                    channel.failure_count += 1
+                    db.commit()
+        except Exception as update_error:
+            logger.error(f"更新失败状态失败: {update_error}")
 
-            publisher = PublisherService()
-            result = publisher.publish_book(book_id, channel_id)
-
-            # 更新记录
-            record.status = PublishStatus.DONE
-            record.external_album_id = result.get("album_id")
-            record.external_album_url = result.get("album_url")
-            record.published_at = datetime.utcnow()
-            record.result_details = result
-            db.commit()
-
-            # 更新渠道统计
-            channel.total_published += 1
-            channel.success_count += 1
-            channel.last_published_at = datetime.utcnow()
-            db.commit()
-
-            logger.info(f"书籍发布成功: book_id={book_id}, channel_id={channel_id}")
-            return {
-                "book_id": book_id,
-                "channel_id": channel_id,
-                "album_id": result.get("album_id"),
-                "success": True,
-            }
-
-        except Exception as e:
-            logger.error(f"书籍发布失败: book_id={book_id}, channel_id={channel_id} - {e}")
-
-            record.status = PublishStatus.FAILED
-            record.error_message = str(e)
-            record.retry_count = (record.retry_count or 0) + 1
-            db.commit()
-
-            # 更新渠道统计
-            channel.failure_count += 1
-            db.commit()
-
-            raise self.retry(exc=e)
+        raise self.retry(exc=e)
 
 
 @celery_app.task(

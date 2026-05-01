@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from core.database import get_db
 from models import Book
+from models.model_book import BookStatus
 from models.model_channel import PublishChannel, PlatformType
 from models.model_publish import PublishRecord, PublishStatus
 
@@ -246,3 +247,77 @@ async def get_publish_record(
         raise HTTPException(status_code=404, detail="记录不存在")
 
     return record.to_dict()
+
+
+@router.get("/records")
+async def list_publish_records(
+    page: int = 1,
+    page_size: int = 20,
+    status: str = None,
+    db: Session = Depends(get_db),
+):
+    """
+    获取发布记录列表
+
+    Args:
+        page: 页码
+        page_size: 每页数量
+        status: 按状态筛选
+        db: 数据库会话
+
+    Returns:
+        dict: 记录列表
+    """
+    query = db.query(PublishRecord)
+
+    # 状态筛选
+    if status:
+        try:
+            status_enum = PublishStatus(status)
+            query = query.filter(PublishRecord.status == status_enum)
+        except ValueError:
+            pass
+
+    # 总数
+    total = query.count()
+
+    # 分页
+    records = (
+        query
+        .order_by(PublishRecord.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    # 获取渠道名称
+    channel_ids = list(set(r.channel_id for r in records))
+    channels = (
+        db.query(PublishChannel)
+        .filter(PublishChannel.id.in_(channel_ids))
+        .all()
+    )
+    channel_map = {ch.id: ch.name for ch in channels}
+
+    # 获取书籍信息
+    book_ids = list(set(r.book_id for r in records))
+    books = (
+        db.query(Book)
+        .filter(Book.id.in_(book_ids))
+        .all()
+    )
+    book_map = {b.id: b.title for b in books}
+
+    return {
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "items": [
+            {
+                **r.to_dict(),
+                "channel_name": channel_map.get(r.channel_id, f"渠道 #{r.channel_id}"),
+                "book_title": book_map.get(r.book_id, f"书籍 #{r.book_id}"),
+            }
+            for r in records
+        ],
+    }

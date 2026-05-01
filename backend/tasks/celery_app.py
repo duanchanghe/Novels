@@ -5,11 +5,12 @@
 """
 Celery 异步任务框架配置
 
-配置 Celery 消息代理、任务路由、序列化方式等。
+配置 Celery 消息代理、任务路由、序列化方式、定时任务调度等。
 """
 
 import os
 from celery import Celery
+from celery.schedules import crontab
 
 # 从环境变量获取配置
 def _get_broker_url():
@@ -61,4 +62,32 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     worker_max_tasks_per_child=1000,
     worker_disable_rate_limits=True,
+
+    # Celery Beat 定时任务调度
+    beat_schedule={
+        # 每 5 分钟扫描监听目录（作为 watchdog 的兜底方案）
+        "scan-incoming-directory": {
+            "task": "tasks.task_watch.scan_incoming_directory",
+            "schedule": 300.0,  # 5 分钟
+            "options": {"queue": "watch"},
+        },
+        # 每 10 分钟检查监听服务健康状态
+        "check-watcher-health": {
+            "task": "tasks.task_watch.check_watcher_health",
+            "schedule": 600.0,  # 10 分钟
+            "options": {"queue": "watch"},
+        },
+        # 每小时清理过期的处理记录
+        "cleanup-old-records": {
+            "task": "tasks.task_watch.cleanup_old_records",
+            "schedule": 3600.0,  # 1 小时
+            "options": {"queue": "watch"},
+        },
+        # 每天凌晨 3 点执行数据统计
+        "daily-stats": {
+            "task": "tasks.task_analyze.daily_stats",
+            "schedule": crontab(hour=3, minute=0),  # 每天 3:00 AM
+            "options": {"queue": "default"},
+        },
+    },
 )

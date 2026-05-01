@@ -50,19 +50,102 @@ def scan_incoming_directory(self) -> Dict[str, Any]:
         logger.debug("文件夹监听已禁用，跳过扫描")
         return {"enabled": False, "files_found": 0}
 
-    watch_dir = settings.WATCH_DIR
-    if not os.path.exists(watch_dir):
-        logger.warning(f"监听目录不存在: {watch_dir}")
-        return {"enabled": True, "files_found": 0, "error": "目录不存在"}
+    # 获取所有监听目录
+    dirs_str = getattr(settings, "WATCH_DIRS", settings.WATCH_DIR)
+    watch_dirs = [d.strip() for d in dirs_str.split(",") if d.strip()]
+    if not watch_dirs:
+        watch_dirs = [settings.WATCH_DIR]
 
-    logger.info(f"开始扫描监听目录: {watch_dir}")
+    all_processed = []
+    all_errors = []
+
+    for watch_dir in watch_dirs:
+        if not os.path.exists(watch_dir):
+            logger.warning(f"监听目录不存在: {watch_dir}")
+            all_errors.append({"dir": watch_dir, "error": "目录不存在"})
+            continue
+
+        logger.info(f"开始扫描监听目录: {watch_dir}")
+
+        result = _scan_single_directory(watch_dir)
+        all_processed.extend(result.get("processed_files", []))
+        all_errors.extend(result.get("errors", []))
+
+    return {
+        "enabled": True,
+        "scan_dirs": watch_dirs,
+        "files_found": len(all_processed),
+        "processed_files": all_processed,
+        "errors": all_errors,
+    }
+
+
+def _move_to_dead_letter(file_path: str, error: str) -> Optional[str]:
+    """
+    将失败的文件移动到 dead-letter 目录
+
+    Args:
+        file_path: 原文件路径
+        error: 错误信息
+
+    Returns:
+        str: 移动后的文件路径，失败返回 None
+    """
+    try:
+        # 获取 dead-letter 目录
+        dead_letter_dir = getattr(settings, "WATCH_DEAD_LETTER_DIR", "/books/dead-letter")
+        os.makedirs(dead_letter_dir, exist_ok=True)
+
+        # 生成新文件名（添加时间戳）
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_name = os.path.basename(file_path)
+        name, ext = os.path.splitext(base_name)
+        new_filename = f"{name}_{timestamp}{ext}"
+        new_path = os.path.join(dead_letter_dir, new_filename)
+
+        # 读取原文件内容
+        with open(file_path, "rb") as f:
+            content = f.read()
+
+        # 写入新文件
+        with open(new_path, "wb") as f:
+            f.write(content)
+
+        # 同时保存错误信息
+        error_log_path = os.path.join(dead_letter_dir, f"{name}_{timestamp}.error.log")
+        with open(error_log_path, "w") as f:
+            f.write(f"Original file: {file_path}\n")
+            f.write(f"Error time: {datetime.now().isoformat()}\n")
+            f.write(f"Error message: {error}\n")
+
+        # 删除原文件
+        os.remove(file_path)
+
+        logger.info(f"失败文件已移动到 dead-letter: {new_path}")
+        return new_path
+
+    except Exception as e:
+        logger.error(f"移动失败文件到 dead-letter 失败: {e}")
+        return None
+
+
+def _scan_single_directory(watch_dir: str) -> Dict[str, Any]:
+    """
+    扫描单个目录
+
+    Args:
+        watch_dir: 要扫描的目录
+
+    Returns:
+        dict: 扫描结果
+    """
+    import hashlib
+
+    processed_files = []
+    errors = []
 
     with get_db_context() as db:
         from models import Book, SourceType, BookStatus
-        import hashlib
-
-        processed_files = []
-        errors = []
 
         try:
             for filename in os.listdir(watch_dir):
@@ -101,25 +184,23 @@ def scan_incoming_directory(self) -> Dict[str, Any]:
                     result = process_new_epub.delay(file_path, file_hash)
                     processed_files.append({
                         "filename": filename,
+                        "dir": watch_dir,
                         "hash": file_hash,
                         "task_id": result.id,
                     })
 
                 except Exception as e:
                     logger.error(f"处理文件失败: {filename} - {e}")
-                    errors.append({"filename": filename, "error": str(e)})
-
-            return {
-                "enabled": True,
-                "scan_dir": watch_dir,
-                "files_found": len(processed_files),
-                "processed_files": processed_files,
-                "errors": errors,
-            }
+                    errors.append({"filename": filename, "dir": watch_dir, "error": str(e)})
 
         except Exception as e:
             logger.error(f"扫描目录失败: {e}")
-            raise self.retry(exc=e)
+            errors.append({"dir": watch_dir, "error": str(e)})
+
+    return {
+        "processed_files": processed_files,
+        "errors": errors,
+    }
 
 
 @celery_app.task(
@@ -147,6 +228,8 @@ def process_new_epub(self, file_path: str, file_hash: str = None) -> Dict[str, A
     with get_db_context() as db:
         from models import Book, SourceType, BookStatus
         from services.svc_epub_parser import EPUBParserService
+
+        book = None  # 确保 book 在异常处理块中可见
 
         try:
             # 计算文件哈希
@@ -205,10 +288,13 @@ def process_new_epub(self, file_path: str, file_hash: str = None) -> Dict[str, A
         except Exception as e:
             logger.error(f"EPUB 文件处理失败: {file_path} - {e}")
 
-            if "book" in locals():
+            if book:
                 book.status = BookStatus.FAILED
                 book.error_message = str(e)
                 db.commit()
+
+            # 移动文件到 dead-letter 目录
+            _move_to_dead_letter(file_path, str(e))
 
             raise
 
@@ -281,3 +367,59 @@ def check_watcher_health(self) -> Dict[str, Any]:
                 "status": "unhealthy",
                 "error": str(e),
             }
+
+
+@celery_app.task(
+    bind=True,
+    base=WatchTask,
+    name="tasks.task_watch.cleanup_old_records",
+    queue="watch",
+)
+def cleanup_old_records(self) -> Dict[str, Any]:
+    """
+    清理过期的处理记录
+
+    清理超过 30 天的 processed_files 集合，防止内存泄漏。
+    同时清理已超过保留期限的失败记录。
+
+    Returns:
+        dict: 清理结果
+    """
+    from services.svc_file_watcher import get_watcher_service
+
+    logger.info("开始清理过期记录")
+
+    try:
+        watcher = get_watcher_service()
+
+        if watcher.handler:
+            # 清理过期的已处理文件记录
+            with watcher.handler._lock:
+                original_count = len(watcher.handler.processed_files)
+                # 保留最近 1000 条记录
+                if len(watcher.handler.processed_files) > 1000:
+                    # 保留最后 500 条
+                    files_to_keep = list(watcher.handler.processed_files)[-500:]
+                    watcher.handler.processed_files = set(files_to_keep)
+                    removed_count = original_count - len(watcher.handler.processed_files)
+                    logger.info(f"清理了 {removed_count} 条过期的已处理文件记录")
+                else:
+                    removed_count = 0
+
+            return {
+                "success": True,
+                "removed_count": removed_count,
+                "remaining_count": len(watcher.handler.processed_files),
+            }
+        else:
+            return {
+                "success": True,
+                "message": "监听服务未运行，无需清理",
+            }
+
+    except Exception as e:
+        logger.error(f"清理过期记录失败: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+        }

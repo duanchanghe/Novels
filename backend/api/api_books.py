@@ -8,6 +8,7 @@
 提供书籍的 CRUD 操作和状态查询接口。
 """
 
+from datetime import timedelta
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -221,3 +222,108 @@ async def delete_book(
     db.commit()
 
     return {"message": "删除成功"}
+
+
+@router.get("/{book_id}/chapters/{chapter_id}/audio")
+async def get_chapter_audio(
+    book_id: int,
+    chapter_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    获取章节音频URL
+
+    Args:
+        book_id: 书籍ID
+        chapter_id: 章节ID
+        db: 数据库会话
+
+    Returns:
+        dict: 音频URL和元数据
+    """
+    # 验证书籍存在
+    book = db.query(Book).filter(Book.id == book_id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+
+    # 获取章节
+    chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    if chapter.book_id != book_id:
+        raise HTTPException(status_code=400, detail="章节不属于该书籍")
+
+    if not chapter.audio_file_path:
+        raise HTTPException(status_code=404, detail="章节音频尚未生成")
+
+    # 获取预签名URL
+    storage = get_storage_service()
+    presigned_url = storage.get_presigned_url(
+        bucket=settings.MINIO_BUCKET_AUDIO,
+        object_name=chapter.audio_file_path,
+        expires=timedelta(hours=1),
+    )
+
+    return {
+        "chapter_id": chapter.id,
+        "audio_url": presigned_url,
+        "duration": chapter.audio_duration,
+        "file_size": chapter.audio_file_size,
+        "format": "mp3",
+    }
+
+
+@router.get("/{book_id}/download")
+async def download_audiobook(
+    book_id: int,
+    format: str = "mp3",
+    db: Session = Depends(get_db),
+):
+    """
+    获取有声书下载链接
+
+    Args:
+        book_id: 书籍ID
+        format: 下载格式（mp3/m4b）
+        db: 数据库会话
+
+    Returns:
+        dict: 下载URL和元数据
+    """
+    # 验证书籍存在
+    book = db.query(Book).filter(Book.id == book_id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+
+    if book.status != BookStatus.DONE:
+        raise HTTPException(status_code=400, detail="书籍尚未生成完成")
+
+    storage = get_storage_service()
+
+    # 确定文件路径
+    if format == "m4b":
+        # 完整有声书 M4B 格式
+        object_name = f"books/{book_id}/audio/full/{book.title}.m4b"
+    else:
+        # 打包下载所有章节 MP3
+        object_name = f"books/{book_id}/audio/{book.title}_complete.zip"
+
+    try:
+        # 获取预签名URL
+        presigned_url = storage.get_presigned_url(
+            bucket=settings.MINIO_BUCKET_AUDIO,
+            object_name=object_name,
+            expires=3600,  # 1小时有效期
+        )
+
+        return {
+            "book_id": book.id,
+            "title": book.title,
+            "format": format,
+            "download_url": presigned_url,
+            "total_chapters": book.total_chapters,
+            "total_duration": book.total_duration,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"文件不存在或尚未生成: {str(e)}")

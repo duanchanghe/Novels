@@ -44,11 +44,24 @@ class FileLock:
     文件锁管理器
 
     使用 fcntl 实现跨进程文件锁，防止同一文件被并发处理。
+    支持 MacOS (fcntl)、Windows (msvcrt)、Linux (fcntl)。
     """
 
     def __init__(self, lock_dir: str = "/tmp/audiobook_locks"):
         self.lock_dir = lock_dir
         os.makedirs(lock_dir, exist_ok=True)
+        self._platform = self._detect_platform()
+
+    def _detect_platform(self) -> str:
+        """检测平台类型"""
+        import platform
+        system = platform.system().lower()
+        if system == "windows":
+            return "windows"
+        elif system == "darwin":
+            return "macos"
+        else:
+            return "linux"
 
     def acquire(self, file_path: str, timeout: float = 30.0) -> bool:
         """
@@ -66,17 +79,42 @@ class FileLock:
             hashlib.md5(file_path.encode()).hexdigest() + ".lock"
         )
 
-        lock_handle = open(lock_file, "w")
         start_time = time.time()
+
+        if self._platform == "windows":
+            return self._acquire_windows(lock_file, timeout, start_time)
+        else:
+            return self._acquire_unix(lock_file, timeout, start_time)
+
+    def _acquire_unix(self, lock_file: str, timeout: float, start_time: float) -> bool:
+        """Unix 系统获取锁（Linux/MacOS）"""
+        lock_handle = open(lock_file, "w")
 
         while time.time() - start_time < timeout:
             try:
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._lock_handles = lock_handle
                 return True
-            except IOError:
+            except (IOError, OSError):
                 time.sleep(0.1)
 
         lock_handle.close()
+        return False
+
+    def _acquire_windows(self, lock_file: str, timeout: float, start_time: float) -> bool:
+        """Windows 系统获取锁"""
+        import msvcrt
+
+        while time.time() - start_time < timeout:
+            try:
+                # Windows 使用 msvcrt 的锁机制
+                lock_fd = os.open(lock_file, os.O_CREATE | os.O_RDWR)
+                msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
+                self._lock_fd = lock_fd
+                return True
+            except (IOError, OSError, AttributeError):
+                time.sleep(0.1)
+
         return False
 
     def release(self, file_path: str) -> None:
@@ -92,6 +130,23 @@ class FileLock:
         )
 
         try:
+            if self._platform == "windows":
+                if hasattr(self, '_lock_fd'):
+                    try:
+                        import msvcrt
+                        msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
+                        os.close(self._lock_fd)
+                        delattr(self, '_lock_fd')
+                    except (IOError, OSError, AttributeError):
+                        pass
+            else:
+                if hasattr(self, '_lock_handles'):
+                    try:
+                        self._lock_handles.close()
+                        delattr(self, '_lock_handles')
+                    except (IOError, OSError):
+                        pass
+
             if os.path.exists(lock_file):
                 os.unlink(lock_file)
         except Exception as e:
@@ -103,24 +158,38 @@ class ProcessingQueue:
     处理队列管理器
 
     控制并发处理数量，防止资源竞争。
+    使用带超时的条件变量避免忙等待。
     """
 
-    def __init__(self, max_concurrent: int = 3):
+    def __init__(self, max_concurrent: int = 3, wait_timeout: float = 5.0):
         self.max_concurrent = max_concurrent
         self._current = 0
         self._lock = Lock()
         self._condition = threading.Condition(self._lock)
+        self._wait_timeout = wait_timeout  # 等待超时，避免永久阻塞
 
-    def acquire(self) -> bool:
+    def acquire(self, timeout: float = None) -> bool:
         """
         获取处理名额
+
+        Args:
+            timeout: 等待超时时间（秒），None 表示使用默认值
 
         Returns:
             bool: 是否获取成功
         """
+        if timeout is None:
+            timeout = self._wait_timeout
+
         with self._lock:
+            # 使用带超时的等待，避免永久阻塞
+            end_time = time.time() + timeout
             while self._current >= self.max_concurrent:
-                self._condition.wait()
+                remaining = end_time - time.time()
+                if remaining <= 0:
+                    return False
+                # 使用短超时以便定期检查停止事件
+                self._condition.wait(timeout=min(remaining, 0.5))
 
             if self._current < self.max_concurrent:
                 self._current += 1
@@ -132,8 +201,9 @@ class ProcessingQueue:
         释放处理名额
         """
         with self._lock:
-            self._current -= 1
-            self._condition.notify()
+            if self._current > 0:
+                self._current -= 1
+            self._condition.notify_all()  # 唤醒所有等待线程
 
     @property
     def current(self) -> int:
@@ -145,10 +215,20 @@ class ProcessingQueue:
         """可用名额"""
         return max(0, self.max_concurrent - self._current)
 
+    def is_full(self) -> bool:
+        """队列是否已满"""
+        return self._current >= self.max_concurrent
+
+    def reset(self) -> None:
+        """重置队列（仅在紧急情况下使用）"""
+        with self._lock:
+            self._current = 0
+            self._condition.notify_all()
+
 
 # 全局限流器和队列
 _file_lock = FileLock()
-_processing_queue = ProcessingQueue(max_concurrent=3)
+_processing_queue = ProcessingQueue(max_concurrent=settings.WATCH_CONCURRENT)
 
 
 class EPUBFileHandler(FileSystemEventHandler):
@@ -233,13 +313,12 @@ class EPUBFileHandler(FileSystemEventHandler):
             logger.warning(f"文件就绪检测超时，跳过: {file_path}")
             return
 
-        # 等待处理名额
-        if not _processing_queue.acquire():
-            logger.warning(f"处理队列已满，等待处理名额: {file_path}")
-            time.sleep(5)
-            if not _processing_queue.acquire():
-                logger.error(f"无法获取处理名额，跳过: {file_path}")
-                return
+        # 等待处理名额（最多等待 30 秒）
+        if not _processing_queue.acquire(timeout=30):
+            logger.warning(f"处理队列已满（当前: {_processing_queue.current}/{_processing_queue.max_concurrent}），跳过: {file_path}")
+            with self._lock:
+                self.stats["total_skipped"] += 1
+            return
 
         try:
             with self._lock:
@@ -274,9 +353,9 @@ class EPUBFileHandler(FileSystemEventHandler):
         # 检查文件大小限制
         try:
             file_size = os.path.getsize(file_path)
-            max_size = settings.MAX_FILE_SIZE_MB * 1024 * 1024  # 默认 500MB
+            max_size = settings.WATCH_MAX_FILE_SIZE_MB * 1024 * 1024  # 默认 500MB
             if file_size > max_size:
-                logger.error(f"文件超过大小限制 ({settings.MAX_FILE_SIZE_MB}MB): {file_path}")
+                logger.error(f"文件超过大小限制 ({settings.WATCH_MAX_FILE_SIZE_MB}MB): {file_path}")
                 return False
         except OSError:
             return False
@@ -385,11 +464,19 @@ class MultiDirectoryWatcher:
             logger.info("文件夹监听已禁用")
             return True
 
-        if self._thread and self._thread.is_alive():
+        # 如果已经在运行，直接返回
+        if self.is_running():
             logger.warning("监听服务已在运行")
             return True
 
         try:
+            # 确保之前的 observer 已完全清理
+            if self.observers:
+                self.stop()
+
+            # 重新解析监听目录（支持动态更新配置）
+            self.watch_dirs = self._parse_watch_dirs()
+
             self._on_new_file_callback = self._on_new_file
             self.handler = EPUBFileHandler(
                 on_new_file=self._on_new_file_callback,
@@ -403,6 +490,9 @@ class MultiDirectoryWatcher:
                 observer.start()
                 self.observers.append(observer)
                 logger.info(f"监听目录: {watch_dir}")
+
+            # 重置停止事件
+            self._stop_event.clear()
 
             # 启动状态报告线程
             self._thread = Thread(target=self._status_reporter, daemon=True)
@@ -425,8 +515,26 @@ class MultiDirectoryWatcher:
         for observer in self.observers:
             observer.join(timeout=5)
 
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=5)
+
         self.observers.clear()
+        self._thread = None
+        # 重置停止事件，以便下次启动
+        self._stop_event.clear()
         logger.info("文件夹监听服务已停止")
+
+    def restart(self) -> bool:
+        """
+        重启监听服务
+
+        Returns:
+            bool: 是否重启成功
+        """
+        logger.info("正在重启监听服务...")
+        self.stop()
+        time.sleep(1)  # 等待资源释放
+        return self.start()
 
     def _on_new_file(self, file_path: str) -> None:
         """
@@ -586,11 +694,13 @@ class WatcherHealthChecker:
         if self._failure_count >= self._max_failures:
             logger.error("监听服务连续故障，尝试重启")
             try:
-                self.watcher.stop()
-                time.sleep(5)
-                self.watcher.start()
+                # 使用新的 restart 方法
+                success = self.watcher.restart()
                 self._failure_count = 0
-                logger.info("监听服务已重启")
+                if success:
+                    logger.info("监听服务已重启")
+                else:
+                    logger.error("监听服务重启失败")
             except Exception as e:
                 logger.error(f"监听服务重启失败: {e}")
 

@@ -24,9 +24,15 @@ services:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - MINIMAX_API_KEY=${MINIMAX_API_KEY}
       - MINIMAX_GROUP_ID=${MINIMAX_GROUP_ID}
+      - WATCH_DIR=${WATCH_DIR:-/books/incoming}
+      - WATCH_DIRS=${WATCH_DIRS:-}
+      - WATCH_MAX_FILE_SIZE_MB=${WATCH_MAX_FILE_SIZE_MB:-500}
+      - WATCH_CONCURRENT=${WATCH_CONCURRENT:-3}
+      - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
+      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
     volumes:
       - ./backend:/app
-      - ./books/incoming:/books/incoming
+      - ./books:/books
       - ./data/incoming:/data/incoming
     depends_on:
       - postgres
@@ -52,6 +58,8 @@ services:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - MINIMAX_API_KEY=${MINIMAX_API_KEY}
       - WATCH_DIR=${WATCH_DIR}
+      - WATCH_DIRS=${WATCH_DIRS}
+      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR}
     volumes:
       - ./books:/books
       - ./data:/data
@@ -73,6 +81,12 @@ services:
     environment:
       - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - WATCH_DIR=${WATCH_DIR:-/books/incoming}
+      - WATCH_DIRS=${WATCH_DIRS:-}
+      - WATCH_ENABLED=${WATCH_ENABLED:-true}
+      - WATCH_INTERVAL=${WATCH_INTERVAL:-60}
+      - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
+      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
     volumes:
       - ./books:/books
     depends_on:

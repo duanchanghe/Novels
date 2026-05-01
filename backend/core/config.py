@@ -86,8 +86,13 @@ class Settings(BaseSettings):
 
     # ---------- 文件夹监听配置 ----------
     WATCH_DIR: str = "/books/incoming"
+    WATCH_DIRS: str = ""  # 逗号分隔的多个监听目录，如 "/books/incoming,/books/import"
     WATCH_INTERVAL: int = 60
     WATCH_ENABLED: bool = True
+    WATCH_MAX_FILE_SIZE_MB: int = 500
+    WATCH_CONCURRENT: int = 3
+    WATCH_STATUS_INTERVAL: int = 300  # 状态报告间隔（秒）
+    WATCH_DEAD_LETTER_DIR: str = "/books/dead-letter"  # 失败文件目录
 
     # ---------- 音频处理配置 ----------
     AUDIO_SAMPLE_RATE: int = 44100

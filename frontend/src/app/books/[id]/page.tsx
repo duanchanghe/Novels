@@ -32,6 +32,7 @@ export default function BookDetailPage() {
   const [isMuted, setIsMuted] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [showSettings, setShowSettings] = useState(false);
+  const [isAutoPlayNext, setIsAutoPlayNext] = useState(true);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
@@ -130,12 +131,96 @@ export default function BookDetailPage() {
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // 下载单章音频
+  const handleDownloadChapter = async (chapter: Chapter) => {
+    try {
+      const data = await api.getChapterAudio(bookId, chapter.id);
+      if (data.audio_url) {
+        // 创建临时链接下载
+        const link = document.createElement('a');
+        link.href = data.audio_url;
+        link.download = `${chapter.title || `第${chapter.chapter_index}章`}.mp3`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (error) {
+      console.error('下载失败:', error);
+      alert('下载失败，请稍后重试');
+    }
+  };
+
+  // 下载整本书
+  const handleDownloadBook = async () => {
+    try {
+      const data = await api.getDownloadUrl(bookId, 'mp3');
+      if (data.download_url) {
+        const link = document.createElement('a');
+        link.href = data.download_url;
+        link.download = `${book.title}.zip`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (error) {
+      console.error('下载失败:', error);
+      // 如果ZIP不存在，尝试下载M4B格式
+      try {
+        const data = await api.getDownloadUrl(bookId, 'm4b');
+        if (data.download_url) {
+          const link = document.createElement('a');
+          link.href = data.download_url;
+          link.download = `${book.title}.m4b`;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+        }
+      } catch (m4bError) {
+        alert('暂无下载文件，请等待生成完成');
+      }
+    }
+  };
+
   const skipTime = (seconds: number) => {
     if (audioRef.current) {
       audioRef.current.currentTime = Math.max(
         0,
         Math.min(duration, audioRef.current.currentTime + seconds)
       );
+    }
+  };
+
+  // 播放下一章
+  const playNextChapter = () => {
+    if (!selectedChapter || chapters.length === 0) return;
+    const currentIndex = chapters.findIndex((ch: Chapter) => ch.id === selectedChapter.id);
+    if (currentIndex >= 0 && currentIndex < chapters.length - 1) {
+      const nextChapter = chapters[currentIndex + 1];
+      if (nextChapter.status === 'done') {
+        setSelectedChapter(nextChapter);
+        setIsPlaying(true);
+      }
+    }
+  };
+
+  // 播放上一章
+  const playPreviousChapter = () => {
+    if (!selectedChapter || chapters.length === 0) return;
+    const currentIndex = chapters.findIndex((ch: Chapter) => ch.id === selectedChapter.id);
+    if (currentIndex > 0) {
+      const prevChapter = chapters[currentIndex - 1];
+      if (prevChapter.status === 'done') {
+        setSelectedChapter(prevChapter);
+        setIsPlaying(true);
+      }
+    }
+  };
+
+  // 音频播放结束，自动播放下一章
+  const handleAudioEnded = () => {
+    setIsPlaying(false);
+    if (isAutoPlayNext) {
+      playNextChapter();
     }
   };
 
@@ -185,7 +270,11 @@ export default function BookDetailPage() {
                 {book?.author || '未知作者'}
               </p>
             </div>
-            <button className="btn-outline flex items-center gap-2">
+            <button 
+              onClick={handleDownloadBook}
+              disabled={book?.status !== 'done'}
+              className="btn-outline flex items-center gap-2 disabled:opacity-50"
+            >
               <Download className="w-4 h-4" />
               下载全部
             </button>
@@ -294,9 +383,25 @@ export default function BookDetailPage() {
                         <div className="flex items-center gap-2">
                           {getStatusBadge(chapter.status)}
                           {chapter.status === 'done' && (
-                            <button className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-lg">
-                              <Play className="w-5 h-5" />
-                            </button>
+                            <>
+                              <button 
+                                onClick={() => handleDownloadChapter(chapter)}
+                                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-lg"
+                                title="下载"
+                              >
+                                <Download className="w-5 h-5" />
+                              </button>
+                              <button 
+                                onClick={() => {
+                                  setSelectedChapter(chapter);
+                                  setIsPlaying(true);
+                                }} 
+                                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-600 rounded-lg"
+                                title="播放"
+                              >
+                                <Play className="w-5 h-5" />
+                              </button>
+                            </>
                           )}
                         </div>
                       </div>
@@ -316,7 +421,7 @@ export default function BookDetailPage() {
           src={audioUrl || undefined}
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
-          onEnded={() => setIsPlaying(false)}
+          onEnded={handleAudioEnded}
         />
 
         {/* 进度条 */}
@@ -346,10 +451,21 @@ export default function BookDetailPage() {
             {/* 播放控制 */}
             <div className="flex items-center gap-2">
               <button
-                onClick={() => skipTime(-10)}
-                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+                onClick={playPreviousChapter}
+                disabled={!selectedChapter || chapters.findIndex((ch: Chapter) => ch.id === selectedChapter?.id) === 0}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg disabled:opacity-30"
+                title="上一章"
               >
                 <SkipBack className="w-5 h-5" />
+              </button>
+
+              <button
+                onClick={() => skipTime(-10)}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+                title="后退10秒"
+              >
+                <SkipBack className="w-4 h-4" />
+                <span className="text-xs ml-[-2px]">10</span>
               </button>
 
               <button
@@ -367,6 +483,17 @@ export default function BookDetailPage() {
               <button
                 onClick={() => skipTime(10)}
                 className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg"
+                title="前进10秒"
+              >
+                <SkipForward className="w-4 h-4" />
+                <span className="text-xs ml-[-2px]">10</span>
+              </button>
+
+              <button
+                onClick={playNextChapter}
+                disabled={!selectedChapter || chapters.findIndex((ch: Chapter) => ch.id === selectedChapter?.id) === chapters.length - 1}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg disabled:opacity-30"
+                title="下一章"
               >
                 <SkipForward className="w-5 h-5" />
               </button>
