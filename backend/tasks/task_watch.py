@@ -10,7 +10,7 @@
 
 import logging
 import os
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from celery import Task
 
@@ -91,6 +91,8 @@ def _move_to_dead_letter(file_path: str, error: str) -> Optional[str]:
     Returns:
         str: 移动后的文件路径，失败返回 None
     """
+    from datetime import datetime
+
     try:
         # 获取 dead-letter 目录
         dead_letter_dir = getattr(settings, "WATCH_DEAD_LETTER_DIR", "/books/dead-letter")

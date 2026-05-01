@@ -152,6 +152,10 @@ export default function BookDetailPage() {
 
   // 下载整本书
   const handleDownloadBook = async () => {
+    if (!book?.title) {
+      alert('书籍信息加载中，请稍后重试');
+      return;
+    }
     try {
       const data = await api.getDownloadUrl(bookId, 'mp3');
       if (data.download_url) {

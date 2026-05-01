@@ -10,7 +10,7 @@
 
 import hashlib
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
@@ -158,7 +158,7 @@ async def get_upload_url(
     url = storage.client.presigned_put_object(
         bucket_name=settings.MINIO_BUCKET_EPUB,
         object_name=object_name,
-        expires=3600,  # 1小时
+        expires=timedelta(hours=1),
     )
 
     return {

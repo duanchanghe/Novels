@@ -15,10 +15,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from core.database import get_db
+from core.config import settings
 from models import Book, Chapter
 from models.model_book import BookStatus
 from models.model_chapter import ChapterStatus
 from schemas import BookResponse, BookListResponse, ChapterResponse
+from services.svc_minio_storage import get_storage_service
 
 
 router = APIRouter(prefix="/books", tags=["书籍管理"])
@@ -301,20 +303,21 @@ async def download_audiobook(
 
     storage = get_storage_service()
 
-    # 确定文件路径
+    # 确定文件路径（移除书名中的非法字符）
+    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in book.title)
     if format == "m4b":
         # 完整有声书 M4B 格式
-        object_name = f"books/{book_id}/audio/full/{book.title}.m4b"
+        object_name = f"books/{book_id}/audio/full/{safe_title}.m4b"
     else:
         # 打包下载所有章节 MP3
-        object_name = f"books/{book_id}/audio/{book.title}_complete.zip"
+        object_name = f"books/{book_id}/audio/{safe_title}_complete.zip"
 
     try:
         # 获取预签名URL
         presigned_url = storage.get_presigned_url(
             bucket=settings.MINIO_BUCKET_AUDIO,
             object_name=object_name,
-            expires=3600,  # 1小时有效期
+            expires=timedelta(hours=1),
         )
 
         return {

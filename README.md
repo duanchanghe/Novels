@@ -193,7 +193,7 @@
 | **目标** | 自动化触发处理流程 |
 | **交付物** | Python服务 + 健康检查API |
 | **任务清单** | ✅ watchdog监听 / ✅ 文件就绪检测 / ✅ MD5去重 / ✅ Celery Beat兜底扫描 / ✅ 进程监控 / ✅ 多目录监听 / ✅ 并发控制 / ✅ 文件锁机制 |
-| **优化清单** | ✅ 跨平台文件锁（MacOS/Windows/Linux）/ ✅ 队列超时防阻塞 / ✅ 服务重启优化 / ✅ Dead-letter 失败文件处理 |
+| **优化清单** | ✅ 跨平台文件锁（MacOS/Windows/Linux）/ ✅ 队列超时防阻塞 / ✅ 服务重启优化 / ✅ Dead-letter 失败文件处理 / ✅ 文件锁多文件并发支持 |
 | **验收标准** | 新EPUB放入文件夹后60秒内自动触发处理 |
 | **实现文件** | `backend/services/svc_file_watcher.py` / `backend/tasks/task_watch.py` / `backend/tests/services/test_file_watcher.py` |
 
@@ -216,7 +216,7 @@
 
 ### 3.7 阶段六：接口与前端层（M11-M12）✅
 
-> **开发状态**：✅ 已完成（2026-05-01）
+> **开发状态**：✅ 已完成（2026-05-01）✅ 审查优化（2026-05-01）
 
 #### M11. 后端API
 | 项目 | 内容 |
@@ -224,6 +224,7 @@
 | **目标** | 前后端数据交互 |
 | **交付物** | FastAPI路由 + API文档 |
 | **任务清单** | ✅ 上传API / ✅ 书籍管理API / ✅ 任务触发API / ✅ 状态查询API / ✅ 音频获取API / ✅ 监听状态API / ✅ 发布管理API |
+| **优化清单** | ✅ presigned_put_object expires 参数类型修复 / ✅ download_audiobook 书名非法字符处理 |
 | **验收标准** | Swagger文档可正常访问 / 所有接口返回正确 |
 | **实现文件** | `backend/api/api_books.py` / `backend/api/api_upload.py` / `backend/api/api_voices.py` / `backend/api/api_watch.py` / `backend/api/api_publish.py` |
 
@@ -1610,4 +1611,8 @@
 
 > ✅ V1.5 优化：跨平台文件锁支持（fcntl/msvcrt）、ProcessingQueue 超时防阻塞、MultiDirectoryWatcher 重启逻辑优化、Dead-letter 失败文件处理机制、发布服务数据库会话一致性优化、Celery Beat 定时任务调度（扫描/健康检查/清理）、配置项增强。
 
+> ✅ V1.5.1 审查优化：文件锁多文件并发支持（基于文件路径的锁句柄字典管理）、model_book.py 导入修复、task_watch.py 缺失导入修复（Optional、datetime）。
+
 > ✅ V1.6 新增：阶段六接口与前端层完整实现，后端新增单章音频URL获取、有声书下载链接、发布记录列表等API；前端新增发布历史页面、书籍详情页播放器增强（自动播放下一章、章节导航）、下载功能等。
+
+> ✅ V1.6.1 审查优化：api_upload.py presigned_put_object expires 参数类型修复（int → timedelta）、download_audiobook 书名非法字符处理（移除特殊字符）。

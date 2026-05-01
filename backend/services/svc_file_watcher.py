@@ -51,6 +51,8 @@ class FileLock:
         self.lock_dir = lock_dir
         os.makedirs(lock_dir, exist_ok=True)
         self._platform = self._detect_platform()
+        self._lock_handles: Dict[str, Any] = {}
+        self._lock_fds: Dict[str, int] = {}
 
     def _detect_platform(self) -> str:
         """检测平台类型"""
@@ -63,6 +65,13 @@ class FileLock:
         else:
             return "linux"
 
+    def _get_lock_file(self, file_path: str) -> str:
+        """获取锁文件路径"""
+        return os.path.join(
+            self.lock_dir,
+            hashlib.md5(file_path.encode()).hexdigest() + ".lock"
+        )
+
     def acquire(self, file_path: str, timeout: float = 30.0) -> bool:
         """
         获取文件锁
@@ -74,26 +83,22 @@ class FileLock:
         Returns:
             bool: 是否获取成功
         """
-        lock_file = os.path.join(
-            self.lock_dir,
-            hashlib.md5(file_path.encode()).hexdigest() + ".lock"
-        )
-
+        lock_file = self._get_lock_file(file_path)
         start_time = time.time()
 
         if self._platform == "windows":
-            return self._acquire_windows(lock_file, timeout, start_time)
+            return self._acquire_windows(lock_file, file_path, timeout, start_time)
         else:
-            return self._acquire_unix(lock_file, timeout, start_time)
+            return self._acquire_unix(lock_file, file_path, timeout, start_time)
 
-    def _acquire_unix(self, lock_file: str, timeout: float, start_time: float) -> bool:
+    def _acquire_unix(self, lock_file: str, file_path: str, timeout: float, start_time: float) -> bool:
         """Unix 系统获取锁（Linux/MacOS）"""
         lock_handle = open(lock_file, "w")
 
         while time.time() - start_time < timeout:
             try:
                 fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-                self._lock_handles = lock_handle
+                self._lock_handles[file_path] = lock_handle
                 return True
             except (IOError, OSError):
                 time.sleep(0.1)
@@ -101,16 +106,15 @@ class FileLock:
         lock_handle.close()
         return False
 
-    def _acquire_windows(self, lock_file: str, timeout: float, start_time: float) -> bool:
+    def _acquire_windows(self, lock_file: str, file_path: str, timeout: float, start_time: float) -> bool:
         """Windows 系统获取锁"""
         import msvcrt
 
         while time.time() - start_time < timeout:
             try:
-                # Windows 使用 msvcrt 的锁机制
                 lock_fd = os.open(lock_file, os.O_CREATE | os.O_RDWR)
                 msvcrt.locking(lock_fd, msvcrt.LK_NBLCK, 1)
-                self._lock_fd = lock_fd
+                self._lock_fds[file_path] = lock_fd
                 return True
             except (IOError, OSError, AttributeError):
                 time.sleep(0.1)
@@ -124,26 +128,24 @@ class FileLock:
         Args:
             file_path: 文件路径
         """
-        lock_file = os.path.join(
-            self.lock_dir,
-            hashlib.md5(file_path.encode()).hexdigest() + ".lock"
-        )
+        lock_file = self._get_lock_file(file_path)
 
         try:
             if self._platform == "windows":
-                if hasattr(self, '_lock_fd'):
+                lock_fd = self._lock_fds.pop(file_path, None)
+                if lock_fd is not None:
                     try:
                         import msvcrt
-                        msvcrt.locking(self._lock_fd, msvcrt.LK_UNLCK, 1)
-                        os.close(self._lock_fd)
-                        delattr(self, '_lock_fd')
-                    except (IOError, OSError, AttributeError):
+                        msvcrt.locking(lock_fd, msvcrt.LK_UNLCK, 1)
+                        os.close(lock_fd)
+                    except (IOError, OSError):
                         pass
             else:
-                if hasattr(self, '_lock_handles'):
+                lock_handle = self._lock_handles.pop(file_path, None)
+                if lock_handle is not None:
                     try:
-                        self._lock_handles.close()
-                        delattr(self, '_lock_handles')
+                        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                        lock_handle.close()
                     except (IOError, OSError):
                         pass
 

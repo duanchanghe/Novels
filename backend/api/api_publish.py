@@ -292,21 +292,25 @@ async def list_publish_records(
 
     # 获取渠道名称
     channel_ids = list(set(r.channel_id for r in records))
-    channels = (
-        db.query(PublishChannel)
-        .filter(PublishChannel.id.in_(channel_ids))
-        .all()
-    )
-    channel_map = {ch.id: ch.name for ch in channels}
+    channel_map = {}
+    if channel_ids:
+        channels = (
+            db.query(PublishChannel)
+            .filter(PublishChannel.id.in_(channel_ids))
+            .all()
+        )
+        channel_map = {ch.id: ch.name for ch in channels}
 
     # 获取书籍信息
     book_ids = list(set(r.book_id for r in records))
-    books = (
-        db.query(Book)
-        .filter(Book.id.in_(book_ids))
-        .all()
-    )
-    book_map = {b.id: b.title for b in books}
+    book_map = {}
+    if book_ids:
+        books = (
+            db.query(Book)
+            .filter(Book.id.in_(book_ids))
+            .all()
+        )
+        book_map = {b.id: b.title for b in books}
 
     return {
         "total": total,
