@@ -21,6 +21,7 @@ from api import (
     watch_router,
     publish_router,
 )
+from services.svc_monitor import get_monitoring_endpoints
 
 
 def create_app() -> FastAPI:
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(voices_router, prefix="/api", tags=["音色管理"])
     app.include_router(watch_router, prefix="/api", tags=["文件夹监听"])
     app.include_router(publish_router, prefix="/api", tags=["自动发布"])
+    app.include_router(get_monitoring_endpoints(), prefix="/api", tags=["系统监控"])
 
     @app.get("/api/health")
     async def health_check():

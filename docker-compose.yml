@@ -30,17 +30,28 @@ services:
       - WATCH_CONCURRENT=${WATCH_CONCURRENT:-3}
       - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
       - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
+      - WATCH_ENABLED=${WATCH_ENABLED:-false}
+      - COST_DAILY_LIMIT=${COST_DAILY_LIMIT:-50}
     volumes:
       - ./backend:/app
       - ./books:/books
       - ./data/incoming:/data/incoming
     depends_on:
-      - postgres
-      - redis
-      - minio
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
     restart: unless-stopped
     networks:
       - audiobook-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 
   # ---------- Celery Worker ----------
   celery-worker:
@@ -60,13 +71,17 @@ services:
       - WATCH_DIR=${WATCH_DIR}
       - WATCH_DIRS=${WATCH_DIRS}
       - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR}
+      - WATCH_ENABLED=${WATCH_ENABLED:-false}
     volumes:
       - ./books:/books
       - ./data:/data
     depends_on:
-      - postgres
-      - redis
-      - minio
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
     restart: unless-stopped
     networks:
       - audiobook-network
@@ -90,10 +105,63 @@ services:
     volumes:
       - ./books:/books
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - audiobook-network
+
+  # ---------- File Watcher Service (watchdog) ----------
+  watchdog:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: audiobook-watchdog
+    command: python -c "from services.svc_file_watcher import main; main()"
+    environment:
+      - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - WATCH_DIR=${WATCH_DIR:-/books/incoming}
+      - WATCH_DIRS=${WATCH_DIRS:-}
+      - WATCH_MAX_FILE_SIZE_MB=${WATCH_MAX_FILE_SIZE_MB:-500}
+      - WATCH_CONCURRENT=${WATCH_CONCURRENT:-3}
+      - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
+      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
+    volumes:
+      - ./books:/books
+      - ./data/incoming:/data/incoming
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+    profiles:
+      - watch
+
+  # ---------- Flower (Celery 监控) ----------
+  flower:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: audiobook-flower
+    command: celery -A tasks.celery_app flower --port=5555
+    ports:
+      - "${FLOWER_PORT:-5555}:5555"
+    environment:
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+    profiles:
+      - monitoring
 
   # ---------- PostgreSQL 数据库 ----------
   postgres:
@@ -110,6 +178,11 @@ services:
     restart: unless-stopped
     networks:
       - audiobook-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-audiobook_user} -d ${DB_NAME:-audiobook_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ---------- Redis 缓存与消息队列 ----------
   redis:
@@ -117,9 +190,16 @@ services:
     container_name: audiobook-redis
     ports:
       - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ./data/redis:/data
     restart: unless-stopped
     networks:
       - audiobook-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   # ---------- MinIO 对象存储 ----------
   minio:
@@ -137,29 +217,44 @@ services:
     restart: unless-stopped
     networks:
       - audiobook-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
 
-  # ---------- 前端 Web 服务 (开发模式) ----------
-  # 前端暂时禁用，等待实现 Next.js 页面
-  # frontend:
-  #   build:
-  #     context: .
-  #     dockerfile: frontend/Dockerfile
-  #   container_name: audiobook-frontend
-  #   ports:
-  #     - "3000:3000"
-  #   environment:
-  #     - NEXT_PUBLIC_API_URL=http://backend:8000
-  #   volumes:
-  #     - ./frontend:/app
-  #     - /app/node_modules
-  #     - /app/.next
-  #   depends_on:
-  #     - backend
-  #   restart: unless-stopped
-  #   networks:
-  #     - audiobook-network
+  # ---------- 前端 Web 服务 ----------
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: audiobook-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+    profiles:
+      - frontend
 
 # ---------- 网络配置 ----------
 networks:
   audiobook-network:
     driver: bridge
+
+# ---------- 通用卷 ----------
+volumes:
+  postgres-data:
+    driver: local
+  redis-data:
+    driver: local
+  minio-data:
+    driver: local

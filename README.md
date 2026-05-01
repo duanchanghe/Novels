@@ -43,7 +43,7 @@
 | 阶段4 | 音频处理层 | M8 | 5-7天 | 专业级音频后处理流水线 | 后处理模块 |
 | 阶段5✅ | 自动化层 | M9-M10 | 7-10天 | 文件监听 + 自动发布 | 监听服务 / 发布引擎 |
 | 阶段6✅ | 接口与前端层 | M11-M12 | 7-10天 | 后端API + 前端界面 | REST API / Web界面 |
-| 阶段7 | 全链路串联 | M13 | 5-7天 | 完整业务闭环 + 部署上线 | 可用产品 / 监控 / 文档 |
+| 阶段7✅ | 全链路串联 | M13 | 5-7天 | 完整业务闭环 + 部署上线 | 可用产品 / 监控 / 文档 |
 
 ---
 
@@ -237,15 +237,18 @@
 | **验收标准** | 完整用户流程可跑通 |
 | **实现文件** | `frontend/src/app/page.tsx` / `frontend/src/app/books/page.tsx` / `frontend/src/app/books/[id]/page.tsx` / `frontend/src/app/watch/page.tsx` / `frontend/src/app/settings/page.tsx` / `frontend/src/app/publish/history/page.tsx` |
 
-### 3.8 阶段七：全链路串联（M13）
+### 3.8 阶段七：全链路串联（M13）✅
+
+> **开发状态**：✅ 已完成（2026-05-01）
 
 #### M13. 端到端集成
 | 项目 | 内容 |
 |------|------|
 | **目标** | 完整业务闭环 |
 | **交付物** | 生产级部署 + 监控 |
-| **任务清单** | 全链路测试 / 性能基准测试 / 监控告警配置 / 部署文档 / 运维手册 |
+| **任务清单** | ✅ 全链路测试 / ✅ 性能基准测试 / ✅ 监控告警配置 / ✅ 部署文档 / ✅ 运维手册 |
 | **验收标准** | 一本完整小说从EPUB到有声书全流程≤30分钟 |
+| **实现文件** | `backend/tasks/task_pipeline.py` / `backend/scripts/test_full_pipeline.py` / `backend/services/svc_monitor.py` / `deploy.sh` / `docs/operations.md` |
 
 ### 3.9 开发迭代顺序
 
@@ -259,7 +262,7 @@
 迭代7: M9                      → 自动化监听可用
 迭代8: M10                     → 自动发布可用
 迭代9: M11 + M12 ✅        → 前后端就绪
-迭代10: M13                    → 全链路贯通 + 部署
+迭代10: M13 ✅              → 全链路贯通 + 部署
 ```
 
 ---
@@ -1616,3 +1619,12 @@
 > ✅ V1.6 新增：阶段六接口与前端层完整实现，后端新增单章音频URL获取、有声书下载链接、发布记录列表等API；前端新增发布历史页面、书籍详情页播放器增强（自动播放下一章、章节导航）、下载功能等。
 
 > ✅ V1.6.1 审查优化：api_upload.py presigned_put_object expires 参数类型修复（int → timedelta）、download_audiobook 书名非法字符处理（移除特殊字符）。
+
+> ✅ V1.7 阶段七优化完善：
+> - task_pipeline.py 添加各阶段耗时统计和性能追踪
+> - analyze_chapter 添加 MiniMax 字符消耗统计
+> - fix analyze_chapter 并行状态冲突（多个章节同时分析时只更新一次书籍状态）
+> - MonitoringService 支持可配置阈值和分级告警（warning/critical）
+> - test_full_pipeline 添加性能基准测试和评级系统（excellent/good/acceptable/poor）
+> - add get_pipeline_history 和 cancel_pipeline 辅助任务
+> - generate_audiobook_simple 改为调用完整流水线
