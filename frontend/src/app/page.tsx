@@ -121,7 +121,7 @@ export default function HomePage() {
               让每一本电子书
               <br />
               <span className="bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-                都能被"听见"
+                都能被「听见」
               </span>
             </h1>
 

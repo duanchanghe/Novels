@@ -112,6 +112,15 @@ class ValidationError(AppError):
     pass
 
 
+class AudioProcessingError(AppError):
+    """
+    音频处理异常
+
+    当音频后处理、合并、格式转换等操作失败时抛出。
+    """
+    pass
+
+
 class NotFoundError(AppError):
     """
     资源不存在异常

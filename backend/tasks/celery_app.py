@@ -35,7 +35,6 @@ celery_app = Celery(
         "tasks.task_publish",
         "tasks.task_watch",
         "tasks.task_pipeline",
-        "tasks.svc_monitor",
     ],
 )
 
@@ -84,18 +83,6 @@ celery_app.conf.update(
             "task": "tasks.task_watch.cleanup_old_records",
             "schedule": 3600.0,  # 1 小时
             "options": {"queue": "watch"},
-        },
-        # 每 5 分钟执行系统健康检查
-        "system-health-check": {
-            "task": "tasks.svc_monitor.check_system_health",
-            "schedule": 300.0,  # 5 分钟
-            "options": {"queue": "default"},
-        },
-        # 每小时检查成本预算
-        "check-cost-budget": {
-            "task": "tasks.svc_monitor.check_cost_budget",
-            "schedule": 3600.0,  # 1 小时
-            "options": {"queue": "default"},
         },
         # 每天凌晨 3 点执行数据统计
         "daily-stats": {

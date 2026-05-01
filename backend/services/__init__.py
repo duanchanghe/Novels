@@ -24,7 +24,7 @@ from .svc_deepseek_analyzer import DeepSeekAnalyzerService
 from .svc_minimax_tts import MiniMaxTTSService
 from .svc_audio_postprocessor import AudioPostprocessorService
 from .svc_voice_mapper import VoiceMapperService
-from .svc_file_watcher import FileWatcherService
+from .svc_file_watcher import get_watcher_service, start_watcher, stop_watcher, MultiDirectoryWatcher
 from .svc_publisher import PublisherService
 
 __all__ = [
@@ -35,6 +35,9 @@ __all__ = [
     "MiniMaxTTSService",
     "AudioPostprocessorService",
     "VoiceMapperService",
-    "FileWatcherService",
+    "get_watcher_service",
+    "start_watcher",
+    "stop_watcher",
+    "MultiDirectoryWatcher",
     "PublisherService",
 ]
