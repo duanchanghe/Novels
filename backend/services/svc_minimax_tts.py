@@ -157,51 +157,51 @@ class MiniMaxTTSService:
     # ===========================================
     VOICE_MAP = {
         # 旁白音色
-        "narrator": "male-qn",
-        "male-narrator": "male-qn",
-        "female-narrator": "female-shaon",
+        "narrator": "male-qn-qingse",
+        "male-narrator": "male-qn-qingse",
+        "female-narrator": "female-tianmei",
         # 男性音色
-        "male": "male-qn",
-        "male-young": "male-qn",
-        "male-adult": "male-qn",
-        "male-elderly": "male-yun",
-        "male-old": "male-yun",
-        "male-deep": "male-tian",
-        "male-villain": "male-tian",
-        "male-hero": "male-qn",
-        "male-protagonist": "male-qn",
+        "male": "male-qn-qingse",
+        "male-young": "male-qn-qingse",
+        "male-adult": "male-qn-qingse",
+        "male-elderly": "male-yunqi",
+        "male-old": "male-yunqi",
+        "male-deep": "male-shaon",
+        "male-villain": "male-shaon",
+        "male-hero": "male-qn-qingse",
+        "male-protagonist": "male-qn-qingse",
         # 女性音色
-        "female": "female-shaon",
-        "female-young": "female-shaon",
-        "female-adult": "female-shaon",
-        "female-elderly": "female-don",
-        "female-old": "female-don",
-        "female-child": "female-xiang",
-        "female-sweet": "female-xiang",
-        "female-heroine": "female-shaon",
-        "female-protagonist": "female-shaon",
+        "female": "female-tianmei",
+        "female-young": "female-tianmei",
+        "female-adult": "female-tianmei",
+        "female-elderly": "female-ss",
+        "female-old": "female-ss",
+        "female-child": "female-tianmei",
+        "female-sweet": "female-tianmei",
+        "female-heroine": "female-tianmei",
+        "female-protagonist": "female-tianmei",
         # 网络小说特有角色类型
-        "仙尊": "male-yun",
-        "魔帝": "male-tian",
-        "剑圣": "male-qn",
-        "道祖": "male-yun",
-        "长老": "male-yun",
-        "宗主": "male-yun",
-        "掌门": "male-qn",
-        "前辈": "male-qn",
-        "师兄": "male-qn",
-        "师父": "male-yun",
-        "徒弟": "male-qn",
-        "圣女": "female-shaon",
-        "仙女": "female-shaon",
-        "仙子": "female-shaon",
-        "妖女": "female-xiang",
-        "魔女": "female-shaon",
-        "女帝": "female-shaon",
-        "女皇": "female-shaon",
+        "仙尊": "male-yunqi",
+        "魔帝": "male-shaon",
+        "剑圣": "male-qn-qingse",
+        "道祖": "male-yunqi",
+        "长老": "male-yunqi",
+        "宗主": "male-yunqi",
+        "掌门": "male-qn-qingse",
+        "前辈": "male-qn-qingse",
+        "师兄": "male-qn-qingse",
+        "师父": "male-yunqi",
+        "徒弟": "male-qn-qingse",
+        "圣女": "female-tianmei",
+        "仙女": "female-tianmei",
+        "仙子": "female-tianmei",
+        "妖女": "female-tianmei",
+        "魔女": "female-tianmei",
+        "女帝": "female-tianmei",
+        "女皇": "female-tianmei",
         # 默认
-        "default": "male-qn",
-        "unknown": "male-qn",
+        "default": "male-qn-qingse",
+        "unknown": "male-qn-qingse",
     }
 
     # ===========================================
@@ -320,7 +320,12 @@ class MiniMaxTTSService:
             str: MiniMax 音色 ID
         """
         if not voice_id:
-            return "male-qn"
+            return "male-qn-qingse"
+
+        # 如果已经是有效的 MiniMax voice_id，直接返回
+        voice_values = list(self.VOICE_MAP.values())
+        if voice_id in voice_values:
+            return voice_id
 
         # 尝试精确匹配
         if voice_id in self.VOICE_MAP:
@@ -336,8 +341,8 @@ class MiniMaxTTSService:
         if voice_id in self.ROLE_TYPE_VOICE_MAP:
             return self.ROLE_TYPE_VOICE_MAP[voice_id]
 
-        # 默认返回 male-qn
-        return "male-qn"
+        # 默认返回 male-qn-qingse
+        return "male-qn-qingse"
 
     def _get_emotion_params(
         self,
@@ -363,9 +368,9 @@ class MiniMaxTTSService:
             emotion_config = self.EMOTION_MAP[emotion]
             return {
                 "emotion": emotion_config["emotion"],
-                "speed": base_speed * emotion_config["speed_factor"],
-                "pitch": base_pitch + emotion_config["pitch_factor"],
-                "volume": base_volume * emotion_config["volume_factor"],
+                "speed": float(base_speed) * float(emotion_config["speed_factor"]),
+                "pitch": float(base_pitch) + float(emotion_config["pitch_factor"]),
+                "volume": float(base_volume) * float(emotion_config["volume_factor"]),
             }
 
         # 尝试基础情感匹配
@@ -374,9 +379,9 @@ class MiniMaxTTSService:
             if key.startswith(base_emotion):
                 return {
                     "emotion": config["emotion"],
-                    "speed": base_speed * config["speed_factor"],
-                    "pitch": base_pitch + config["pitch_factor"],
-                    "volume": base_volume * config["volume_factor"],
+                    "speed": float(base_speed) * float(config["speed_factor"]),
+                    "pitch": float(base_pitch) + float(config["pitch_factor"]),
+                    "volume": float(base_volume) * float(config["volume_factor"]),
                 }
 
         # 默认返回 neutral
@@ -468,19 +473,20 @@ class MiniMaxTTSService:
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": "speech-01-turbo" if quality == AudioQuality.STANDARD else "speech-01",
+                        "model": "speech-2.8-hd",
                         "text": text,
+                        "stream": False,
                         "voice_setting": {
                             "voice_id": mapped_voice_id,
-                            "speed": emotion_params["speed"],
-                        },
-                        "emotion_setting": {
-                            "emotion": emotion_params["emotion"],
+                            "speed": int(emotion_params["speed"] * 100),  # MiniMax 使用整数（百分比）
+                            "vol": int(emotion_params["volume"] * 100),
+                            "pitch": int(emotion_params["pitch"] * 100),
                         },
                         "audio_setting": {
-                            "sample_rate": 32000 if quality == AudioQuality.STANDARD else 48000,
-                            "bitrate": 128000 if quality == AudioQuality.STANDARD else 256000,
+                            "sample_rate": 32000,
+                            "bitrate": 128000,
                             "format": "mp3",
+                            "channel": 1,
                         },
                     },
                 )
@@ -494,28 +500,37 @@ class MiniMaxTTSService:
 
                 if response.status_code != 200:
                     _tts_cost_stats.add_error()
+                    error_msg = response.text
+                    # 提取错误消息
+                    try:
+                        resp_json = response.json()
+                        error_msg = resp_json.get("base_resp", {}).get("status_msg", error_msg)
+                    except:
+                        pass
                     raise MiniMaxApiError(
-                        f"MiniMax API 调用失败: {response.status_code} - {response.text}"
+                        f"MiniMax API 调用失败: {response.status_code} - {error_msg}"
                     )
 
                 result = response.json()
 
+                # 调试日志
+                logger.info(f"MiniMax API 响应: {result}")
+
                 # 检查是否有音频数据
-                if "data" in result and "audio_file" in result["data"]:
+                if "data" in result and "audio" in result["data"]:
                     # 更新成本统计
                     _tts_cost_stats.add(
                         characters=len(text),
                         audio_seconds=len(text) / 10,  # 估算：每秒约10字符
                         cost=len(text) / 1000 * _tts_cost_stats.PRICE_PER_1000_CHARS,
                     )
-                    
-                    # 返回音频数据
-                    audio_data = result["data"]["audio_file"]
-                    # 如果是 base64 编码，解码
-                    if isinstance(audio_data, str):
-                        import base64
-                        return base64.b64decode(audio_data)
-                    return audio_data
+
+                    # 返回音频数据 (hex 编码)
+                    audio_hex = result["data"]["audio"]
+                    # 转换为 bytes
+                    if isinstance(audio_hex, str):
+                        return bytes.fromhex(audio_hex)
+                    return audio_hex
 
                 # 如果返回的是 URL
                 if "data" in result and "audio_url" in result["data"]:
@@ -558,14 +573,11 @@ class MiniMaxTTSService:
             bytes: 音频数据
         """
         global _tts_cost_stats
-        
+
         import asyncio
 
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
         try:
             return loop.run_until_complete(
@@ -574,6 +586,8 @@ class MiniMaxTTSService:
         except MiniMaxApiError:
             _tts_cost_stats.add_retry()
             raise
+        finally:
+            loop.close()
 
     def synthesize_sync(
         self,
@@ -600,15 +614,15 @@ class MiniMaxTTSService:
         """
         import asyncio
 
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
-        return loop.run_until_complete(
-            self.synthesize(text, voice_id, speed, emotion, pitch, volume)
-        )
+        try:
+            return loop.run_until_complete(
+                self.synthesize(text, voice_id, speed, emotion, pitch, volume)
+            )
+        finally:
+            loop.close()
 
     async def synthesize_batch(
         self,

@@ -92,6 +92,113 @@ _cost_stats = CostStats()
 
 
 # ===========================================
+# JSON 修复辅助函数
+# ===========================================
+
+def _parse_deepseek_response(content: str) -> dict:
+    """
+    解析 DeepSeek API 响应
+
+    处理多种可能的响应格式：
+    1. 纯 JSON
+    2. markdown 代码块包裹的 JSON
+    3. 嵌套 JSON（API 在 JSON 中返回了文本形式的 JSON）
+    4. 格式错误的 JSON
+
+    Args:
+        content: API 返回的原始内容
+
+    Returns:
+        dict: 解析后的结果
+    """
+    import re
+
+    # 策略1：尝试直接解析
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+
+    # 策略2：提取 markdown 代码块中的 JSON
+    json_match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', content)
+    if json_match:
+        json_str = json_match.group(1).strip()
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            pass
+
+    # 策略3：处理嵌套 JSON（API 在 text 字段中返回了 JSON 文本）
+    # 查找 "text": "```json\n{..." 模式
+    nested_match = re.search(r'"text"\s*:\s*"```json\s*([\s\S]*?)\s*```\s*"', content)
+    if nested_match:
+        nested_json = nested_match.group(1).strip()
+        try:
+            return json.loads(nested_json)
+        except json.JSONDecodeError:
+            pass
+
+    # 策略4：尝试修复格式错误的 JSON
+    fixed_result = _fix_malformed_json(json_match.group(1) if json_match else content)
+    if fixed_result and fixed_result.get("paragraphs"):
+        return fixed_result
+
+    # 策略5：最后的尝试 - 查找任何看起来像 JSON 对象的内容
+    # 这是一个兜底策略
+    all_json_matches = re.findall(r'\{[\s\S]*\}', content)
+    for potential_json in all_json_matches:
+        try:
+            result = json.loads(potential_json)
+            if isinstance(result, dict) and ("paragraphs" in result or "characters" in result):
+                return result
+        except json.JSONDecodeError:
+            continue
+
+    # 所有策略都失败，返回包含原始内容的响应
+    return {"text": content, "paragraphs": []}
+
+
+def _fix_malformed_json(json_str: str) -> dict:
+    """
+    修复格式错误的 JSON（DeepSeek 有时返回未转义引号的 JSON）
+
+    Args:
+        json_str: JSON 字符串
+
+    Returns:
+        dict: 修复后的结果
+    """
+    lines = json_str.split('\n')
+    fixed_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            fixed_lines.append(line)
+            continue
+        text_keys = ['"text"', '"speaker"', '"name"', '"aliases"']
+        has_text_key = any(key in line for key in text_keys)
+        if has_text_key and ':' in line:
+            colon_pos = line.rfind(':')
+            if colon_pos != -1:
+                value_part = line[colon_pos + 1:].strip()
+                if value_part.startswith('"'):
+                    remaining = value_part[1:]
+                    last_quote_pos = remaining.rfind('"')
+                    if last_quote_pos != -1:
+                        value_content = remaining[:last_quote_pos]
+                        trailing = remaining[last_quote_pos + 1:]
+                        if '"' in value_content and '\\"' not in value_content:
+                            value_content = value_content.replace('"', '\\"')
+                            line = line[:colon_pos + 1] + ' "' + value_content + '"' + trailing
+        fixed_lines.append(line)
+    fixed_json = '\n'.join(fixed_lines)
+    try:
+        return json.loads(fixed_json)
+    except json.JSONDecodeError:
+        return {"paragraphs": []}
+
+
+# ===========================================
 # 角色消歧映射表（扩展版 - 包含中文网络小说特色称呼）
 # ===========================================
 
@@ -894,11 +1001,7 @@ class DeepSeekAnalyzerService:
             _cost_stats.add(total_tokens, cost)
 
             # 尝试解析 JSON
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                # 如果不是纯 JSON，可能是纯文本响应
-                return {"text": content, "paragraphs": []}
+            return _parse_deepseek_response(content)
 
     def _extract_dialogue_info(self, paragraphs: List[Dict]) -> List[Dict]:
         """提取对话信息供音频参数建议使用"""
@@ -997,12 +1100,11 @@ class DeepSeekAnalyzerService:
         import asyncio
 
         try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(self.analyze_text(text, role_list))
+            return loop.run_until_complete(self.analyze_text(text, role_list))
+        finally:
+            loop.close()
 
     def _extract_characters(self, paragraphs: List[Dict]) -> List[Dict[str, Any]]:
         """
@@ -1060,11 +1162,8 @@ class DeepSeekAnalyzerService:
         """
         import asyncio
 
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
         async def _normalize():
             result = await self._call_deepseek(
@@ -1074,7 +1173,10 @@ class DeepSeekAnalyzerService:
                 return result.get("text", text)
             return text
 
-        return loop.run_until_complete(_normalize())
+        try:
+            return loop.run_until_complete(_normalize())
+        finally:
+            loop.close()
 
     def clear_cache(self) -> None:
         """清空分析缓存"""

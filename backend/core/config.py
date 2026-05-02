@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str = ""
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
     DEEPSEEK_MODEL: str = "deepseek-chat"
-    DEEPSEEK_MAX_TOKENS: int = 4096
+    DEEPSEEK_MAX_TOKENS: int = 8192
     DEEPSEEK_TEMPERATURE: float = 0.7
 
     # ---------- MiniMax TTS API 配置 ----------

@@ -187,9 +187,9 @@ async def trigger_generation(
     if book.status == BookStatus.DONE:
         raise HTTPException(status_code=400, detail="书籍已完成生成")
 
-    # 提交 Celery 任务
-    from tasks.task_analyze import analyze_book
-    result = analyze_book.delay(book_id)
+    # 提交完整流水线 Celery 任务
+    from tasks.task_pipeline import generate_audiobook_simple
+    result = generate_audiobook_simple.delay(book_id)
 
     return {
         "book_id": book_id,

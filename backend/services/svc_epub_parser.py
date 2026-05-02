@@ -22,8 +22,11 @@ from datetime import datetime
 
 import ebooklib
 from ebooklib import epub
-from ebooklib import ITEM_DOCUMENT, ITEM_IMAGE
 from bs4 import BeautifulSoup
+
+# ebooklib 类型常量（兼容新旧版本）
+ITEM_IMAGE = 1  # EpubImage type
+ITEM_DOCUMENT = 9  # EpubHtml type
 
 from core.exceptions import EPUBParseError
 

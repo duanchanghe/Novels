@@ -36,12 +36,14 @@ class ChapterStatus(str, enum.Enum):
     章节处理状态枚举
 
     - pending: 等待处理
+    - analyzing: 正在分析（DeepSeek分析中）
     - analyzed: 已分析（DeepSeek分析完成）
     - synthesizing: 正在合成（TTS进行中）
     - done: 完成
     - failed: 失败
     """
     PENDING = "pending"
+    ANALYZING = "analyzing"
     ANALYZED = "analyzed"
     SYNTHESIZING = "synthesizing"
     DONE = "done"

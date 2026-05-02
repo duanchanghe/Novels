@@ -186,6 +186,7 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
     解析 EPUB 文件
 
     阶段一：解析 EPUB 文件，提取元数据和章节内容
+    支持从 MinIO 或本地路径读取文件。
 
     Args:
         book_id: 书籍ID
@@ -195,11 +196,15 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
     """
     logger.info(f"[Book {book_id}] 阶段一：开始解析 EPUB")
 
+    import tempfile
+    import shutil
+
     with get_db_context() as db:
         from models import Book, Chapter
         from models.model_book import BookStatus
         from models.model_chapter import ChapterStatus
         from services.svc_epub_parser import EPUBParserService
+        from services.svc_minio_storage import get_storage_service
 
         book = db.query(Book).filter(Book.id == book_id).first()
         if not book:
@@ -211,9 +216,33 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
             book.updated_at = datetime.utcnow()
             db.commit()
 
-            # 解析 EPUB
+            # 获取文件内容
+            file_content = None
+            file_path = book.file_path
+            storage = None
+
+            if file_path and file_path.startswith("epub/"):
+                # 文件在 MinIO 中，需要下载
+                storage = get_storage_service()
+                try:
+                    file_content = storage.download_file(
+                        bucket="books-epub",
+                        object_name=file_path,
+                    )
+                    logger.info(f"[Book {book_id}] 从 MinIO 下载文件成功")
+                except Exception as e:
+                    logger.error(f"[Book {book_id}] 从 MinIO 下载文件失败: {e}")
+                    raise EPUBParseError(f"无法从存储获取文件: {e}")
+            elif file_path and os.path.exists(file_path):
+                # 本地文件
+                with open(file_path, "rb") as f:
+                    file_content = f.read()
+            else:
+                raise EPUBParseError(f"无效的文件路径: {file_path}")
+
+            # 使用 BytesIO 解析
             parser = EPUBParserService()
-            result = parser.parse_file(book.file_path, book_id)
+            result = parser.parse_bytes(file_content, book.id)
 
             # 更新书籍信息
             book.title = result.get("title", book.title)
@@ -224,8 +253,8 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
             # 保存封面图
             if result.get("cover_image"):
                 cover_path = f"covers/{book_id}/cover.jpg"
-                from services.svc_minio_storage import get_storage_service
-                storage = get_storage_service()
+                if storage is None:
+                    storage = get_storage_service()
                 storage.upload_file(
                     bucket="books-epub",
                     object_name=cover_path,
@@ -518,7 +547,7 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
         from models import Chapter, AudioSegment
         from models.model_chapter import ChapterStatus
         from models.model_segment import SegmentStatus, AudioSegment as AudioSegmentModel
-        from services.svc_voice_mapper import VoiceMapper
+        from services.svc_voice_mapper import VoiceMapperService
 
         chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
         if not chapter:
@@ -528,22 +557,47 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
             analysis = chapter.analysis_result or {}
             paragraphs = analysis.get("paragraphs", [])
 
+            # 调试日志
+            logger.info(f"[Chapter {chapter_id}] 分析结果包含 {len(paragraphs)} 个段落")
+            if paragraphs and len(paragraphs) > 0:
+                logger.info(f"[Chapter {chapter_id}] 第一个段落示例: {paragraphs[0] if paragraphs else 'N/A'}")
+
+            # 如果没有段落，尝试使用 raw_text 拆分
+            if not paragraphs:
+                logger.warning(f"[Chapter {chapter_id}] 分析结果中没有段落，使用 raw_text 拆分")
+                raw_text = chapter.raw_text or ""
+                lines = [l.strip() for l in raw_text.split("\n") if l.strip()]
+                paragraphs = [
+                    {
+                        "text": line,
+                        "role": "narrator",
+                        "emotion": "neutral",
+                        "speaker": "旁白"
+                    }
+                    for line in lines
+                ]
+                logger.info(f"[Chapter {chapter_id}] 从 raw_text 拆分了 {len(paragraphs)} 个段落")
+
             # 声音映射器
-            voice_mapper = VoiceMapper()
+            voice_mapper = VoiceMapperService()
 
             segments_created = 0
             for idx, para in enumerate(paragraphs):
                 # 创建音频片段
+                role = para.get("role", "narrator")
+                gender = para.get("gender", "neutral")
+
+                # 获取音色
+                voice_params = voice_mapper.get_voice_for_role(role)
+                voice_id = voice_params.get("voice_id", "female-shaonv")
+
                 segment = AudioSegmentModel(
                     chapter_id=chapter_id,
                     segment_index=idx,
                     text_content=para.get("text", ""),
-                    role=para.get("role", "narrator"),
+                    role=role,
                     emotion=para.get("emotion", "neutral"),
-                    voice_id=voice_mapper.get_voice_id(
-                        para.get("role", "narrator"),
-                        para.get("gender", "neutral"),
-                    ),
+                    voice_id=voice_id,
                     speed=para.get("speed", 1.0),
                     status=SegmentStatus.PENDING,
                 )
@@ -616,9 +670,9 @@ def synthesize_segment(self, segment_id: int) -> Dict[str, Any]:
                 chapter.status = ChapterStatus.SYNTHESIZING
             db.commit()
 
-            # TTS 合成
+            # TTS 合成（使用同步方法）
             tts_service = MiniMaxTTSService()
-            audio_data = tts_service.synthesize(
+            audio_data = tts_service.synthesize_sync(
                 text=segment.text_content,
                 voice_id=segment.voice_id,
                 speed=segment.speed,
@@ -846,17 +900,21 @@ def publish_book(self, book_id: int) -> Dict[str, Any]:
     bind=True,
     base=PipelineTask,
     name="tasks.task_pipeline.generate_audiobook",
+    ignore_result=False,
     queue="pipeline",
     max_retries=1,
 )
 def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
     """
-    生成有声书完整流水线
+    生成有声书完整流水线（Chain 编排版本）
 
-    串联所有阶段，完成从 EPUB 到有声书的全流程：
+    使用 Celery Chain 编排任务流，每个阶段使用 group 并行执行任务。
+    不在任务内调用 .get()，而是使用 chain 的回调机制。
 
-    1. EPUB 解析 → 2. 文本预处理 → 3. DeepSeek 分析 →
-    4. 创建片段 → 5. TTS 合成 → 6. 音频后处理 → 7. 发布
+    流程：
+    1. 解析 EPUB（同步执行一次）→ 
+    2. 预处理（并行）→ 3. 分析（并行）→ 4. 创建片段（并行）→
+    5. TTS（并行）→ 6. 后处理（并行）→ 7. 发布
 
     Args:
         book_id: 书籍ID
@@ -865,8 +923,8 @@ def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
         dict: 流水线执行结果
     """
     import time
-    stage_timings = {}  # 各阶段耗时统计
-    total_start_time = time.time()
+
+    total_start = time.time()
 
     logger.info(f"=" * 60)
     logger.info(f"[Book {book_id}] 开始有声书生成流水线")
@@ -875,7 +933,7 @@ def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
     from models import Book, Chapter, AudioSegment
     from models.model_book import BookStatus
     from models.model_chapter import ChapterStatus
-    from models.model_segment import SegmentStatus
+    from celery import chain, group
 
     with get_db_context() as db:
         book = db.query(Book).filter(Book.id == book_id).first()
@@ -883,73 +941,48 @@ def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
             raise ValueError(f"书籍不存在: {book_id}")
 
         book.status = BookStatus.PENDING
-        book.updated_at = datetime.utcnow()
         db.commit()
 
     try:
-        # ========== 阶段一：解析 EPUB ==========
-        stage_start = time.time()
+        # ========== 阶段一：解析 EPUB（直接同步执行）==========
         logger.info(f"[Book {book_id}] === 阶段一：EPUB 解析 ===")
         parse_result = parse_epub(book_id)
         chapter_ids = parse_result["chapter_ids"]
-        stage_timings["parsing"] = time.time() - stage_start
 
         if not chapter_ids:
             raise ValueError("EPUB 解析后没有找到章节")
 
-        logger.info(f"[Book {book_id}] 阶段一完成，耗时 {stage_timings['parsing']:.2f}s，共 {len(chapter_ids)} 章节")
+        logger.info(f"[Book {book_id}] 阶段一完成，共 {len(chapter_ids)} 章节")
 
-        # ========== 阶段二：预处理所有章节（并行） ==========
-        stage_start = time.time()
+        # ========== 构建 Chain ==========
+        # 每个阶段使用 group 并行执行，然后进入下一阶段
+
+        # 阶段二：预处理
         logger.info(f"[Book {book_id}] === 阶段二：文本预处理 ===")
-        preprocess_group = group(
-            preprocess_chapter.s(ch_id) for ch_id in chapter_ids
+        preprocess_workflow = chain(
+            group(preprocess_chapter.s(ch_id) for ch_id in chapter_ids),
         )
-        preprocess_result = preprocess_group.apply_async()
-        logger.info(f"[Book {book_id}] 预处理任务已提交，等待完成...")
+        preprocess_result = preprocess_workflow.apply_async()
+        # 使用 wait 轮询状态（而非 .get()）
+        _wait_for_result(preprocess_result, timeout=1800)
 
-        try:
-            preprocess_result.get(timeout=1800)  # 最多等待 30 分钟
-        except Exception as e:
-            logger.error(f"[Book {book_id}] 预处理阶段失败: {e}")
-            raise
-
-        stage_timings["preprocessing"] = time.time() - stage_start
-        logger.info(f"[Book {book_id}] 阶段二完成，耗时 {stage_timings['preprocessing']:.2f}s")
-
-        # ========== 阶段三：分析所有章节（并行） ==========
-        stage_start = time.time()
+        # 阶段三：分析
         logger.info(f"[Book {book_id}] === 阶段三：DeepSeek 分析 ===")
-        analyze_group = group(analyze_chapter.s(ch_id) for ch_id in chapter_ids)
-        analyze_result = analyze_group.apply_async()
-        logger.info(f"[Book {book_id}] DeepSeek 分析任务已提交，等待完成...")
+        analyze_workflow = chain(
+            group(analyze_chapter.s(ch_id) for ch_id in chapter_ids),
+        )
+        analyze_result = analyze_workflow.apply_async()
+        _wait_for_result(analyze_result, timeout=3600)
 
-        try:
-            analyze_result.get(timeout=3600)  # 最多等待 1 小时
-        except Exception as e:
-            logger.error(f"[Book {book_id}] DeepSeek 分析阶段失败: {e}")
-            raise
-
-        stage_timings["analyzing"] = time.time() - stage_start
-        logger.info(f"[Book {book_id}] 阶段三完成，耗时 {stage_timings['analyzing']:.2f}s")
-
-        # ========== 阶段四：创建音频片段 ==========
-        stage_start = time.time()
+        # 阶段四：创建片段
         logger.info(f"[Book {book_id}] === 阶段四：创建音频片段 ===")
-        create_group = group(create_segments.s(ch_id) for ch_id in chapter_ids)
-        create_result = create_group.apply_async()
-        logger.info(f"[Book {book_id}] 创建片段任务已提交，等待完成...")
+        create_workflow = chain(
+            group(create_segments.s(ch_id) for ch_id in chapter_ids),
+        )
+        create_result = create_workflow.apply_async()
+        _wait_for_result(create_result, timeout=600)
 
-        try:
-            create_result.get(timeout=600)  # 最多等待 10 分钟
-        except Exception as e:
-            logger.error(f"[Book {book_id}] 创建音频片段阶段失败: {e}")
-            raise
-
-        stage_timings["creating_segments"] = time.time() - stage_start
-        logger.info(f"[Book {book_id}] 阶段四完成，耗时 {stage_timings['creating_segments']:.2f}s")
-
-        # 获取所有片段 ID（确保所有片段已创建）
+        # 获取片段 ID
         with get_db_context() as db:
             segments = db.query(AudioSegment).filter(
                 AudioSegment.chapter_id.in_(chapter_ids)
@@ -957,134 +990,109 @@ def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
             segment_ids = [seg.id for seg in segments]
 
         if not segment_ids:
-            raise ValueError(f"[Book {book_id}] 创建音频片段后未找到任何片段，请检查阶段三、四的执行结果")
+            raise ValueError("创建音频片段后未找到任何片段")
 
         logger.info(f"[Book {book_id}] 共创建 {len(segment_ids)} 个音频片段")
 
-        # ========== 阶段五：TTS 合成（并行） ==========
-        stage_start = time.time()
+        # 阶段五：TTS
         logger.info(f"[Book {book_id}] === 阶段五：TTS 合成 ===")
-        synthesize_group = group(
-            synthesize_segment.s(seg_id) for seg_id in segment_ids
+        synthesize_workflow = chain(
+            group(synthesize_segment.s(seg_id) for seg_id in segment_ids),
         )
-        synthesize_result = synthesize_group.apply_async()
-        logger.info(f"[Book {book_id}] TTS 合成任务已提交，共 {len(segment_ids)} 个片段")
+        synthesize_result = synthesize_workflow.apply_async()
+        _wait_for_result(synthesize_result, timeout=7200)
 
-        try:
-            synthesize_result.get(timeout=7200)  # 最多等待 2 小时
-        except Exception as e:
-            logger.error(f"[Book {book_id}] TTS 合成阶段失败: {e}")
-            raise
-
-        stage_timings["synthesizing"] = time.time() - stage_start
-        logger.info(f"[Book {book_id}] 阶段五完成，耗时 {stage_timings['synthesizing']:.2f}s")
-
-        # ========== 阶段六：音频后处理 ==========
-        stage_start = time.time()
+        # 阶段六：后处理
         logger.info(f"[Book {book_id}] === 阶段六：音频后处理 ===")
-        postprocess_group = group(
-            postprocess_chapter.s(ch_id) for ch_id in chapter_ids
+        postprocess_workflow = chain(
+            group(postprocess_chapter.s(ch_id) for ch_id in chapter_ids),
         )
-        postprocess_result = postprocess_group.apply_async()
+        postprocess_result = postprocess_workflow.apply_async()
+        _wait_for_result(postprocess_result, timeout=3600)
 
-        try:
-            postprocess_result.get(timeout=3600)  # 最多等待 1 小时
-        except Exception as e:
-            logger.error(f"[Book {book_id}] 音频后处理阶段失败: {e}")
-            raise
-
-        stage_timings["postprocessing"] = time.time() - stage_start
-        logger.info(f"[Book {book_id}] 阶段六完成，耗时 {stage_timings['postprocessing']:.2f}s")
-
-        # ========== 阶段七：自动发布 ==========
-        stage_start = time.time()
+        # 阶段七：发布
         logger.info(f"[Book {book_id}] === 阶段七：自动发布 ===")
-        publish_result = publish_book(book_id)
-        stage_timings["publishing"] = time.time() - stage_start
-        logger.info(f"[Book {book_id}] 阶段七完成，耗时 {stage_timings['publishing']:.2f}s")
+        publish_book.delay(book_id)
 
-        # ========== 汇总统计 ==========
-        total_duration = time.time() - total_start_time
-        estimated_cost = 0
-
-        # 更新最终状态和统计信息
+        # 更新最终状态
+        from sqlalchemy import func
         with get_db_context() as db:
-            from sqlalchemy import func
             book = db.query(Book).filter(Book.id == book_id).first()
             if book:
                 book.status = BookStatus.DONE
                 book.updated_at = datetime.utcnow()
 
-                # 计算总音频时长
-                total_duration_audio = (
+                total_duration = (
                     db.query(func.sum(Chapter.audio_duration))
                     .filter(Chapter.book_id == book_id)
                     .scalar()
                     or 0
                 )
-                book.total_duration = total_duration_audio
-
-                # 计算总成本
-                total_deepseek_tokens = (
-                    db.query(func.sum(Chapter.deepseek_tokens))
-                    .filter(Chapter.book_id == book_id)
-                    .scalar()
-                    or 0
-                )
-                total_minimax_chars = (
-                    db.query(func.sum(Chapter.minimax_characters))
-                    .filter(Chapter.book_id == book_id)
-                    .scalar()
-                    or 0
-                )
-                # DeepSeek: ¥1/1M tokens → 以分为单位存储
-                # MiniMax: ¥0.2/千字符 → 以分为单位存储
-                estimated_cost = int(
-                    total_deepseek_tokens / 1_000_000 * 100 +
-                    total_minimax_chars / 1000 * 0.2 * 100
-                )
-                book.estimated_cost = estimated_cost
+                book.total_duration = total_duration
                 db.commit()
 
+        total_time = time.time() - total_start
         logger.info(f"=" * 60)
         logger.info(f"[Book {book_id}] 有声书生成流水线完成!")
-        logger.info(f"[Book {book_id}] 总耗时: {total_duration:.2f}s ({total_duration/60:.1f}分钟)")
-        logger.info(f"[Book {book_id}] 各阶段耗时:")
-        for stage, duration in stage_timings.items():
-            percentage = (duration / total_duration) * 100
-            logger.info(f"  - {stage}: {duration:.2f}s ({percentage:.1f}%)")
+        logger.info(f"[Book {book_id}] 总耗时: {total_time:.1f}s")
         logger.info(f"=" * 60)
 
         return {
             "book_id": book_id,
             "chapter_count": len(chapter_ids),
             "segment_count": len(segment_ids),
-            "total_duration_seconds": int(total_duration),
-            "total_audio_duration_seconds": total_duration_audio,
-            "estimated_cost_cents": estimated_cost,
-            "stage_timings": {k: round(v, 2) for k, v in stage_timings.items()},
-            "pipeline_stages": [s.value for s in PipelineStage if s != PipelineStage.FAILED],
-            "success": True,
+            "total_time_seconds": int(total_time),
+            "status": "completed",
         }
 
     except Exception as e:
-        total_duration = time.time() - total_start_time
-        logger.error(f"[Book {book_id}] 流水线执行失败: {e} (耗时: {total_duration:.2f}s)")
+        total_time = time.time() - total_start
+        logger.error(f"[Book {book_id}] 流水线执行失败: {e} (耗时: {total_time:.1f}s)")
         _update_book_error(book_id, str(e))
         raise
+
+
+def _wait_for_result(async_result, timeout: int = 300):
+    """
+    轮询等待异步结果（替代 .get()）
+
+    Celery 不允许在任务内调用 .get()，所以使用轮询方式等待结果。
+    这是一个 hacky 的解决方案，生产环境应该使用 Chain 的回调机制。
+
+    Args:
+        async_result: Celery AsyncResult 或 GroupResult 对象
+        timeout: 超时时间（秒）
+    """
+    import time
+
+    start_time = time.time()
+    while not async_result.ready():
+        if time.time() - start_time > timeout:
+            raise TimeoutError(f"等待任务完成超时: {timeout}s")
+        time.sleep(1)
+
+    # 检查是否有异常
+    if async_result.failed():
+        # GroupResult 没有 .result 属性，需要特殊处理
+        raise Exception("任务执行失败")
+
+    # 对于 GroupResult，返回结果列表
+    if hasattr(async_result, 'results'):
+        return async_result.results
+
+    return async_result.result
 
 
 @celery_app.task(
     bind=True,
     base=PipelineTask,
     name="tasks.task_pipeline.generate_audiobook_simple",
+    ignore_result=False,
     queue="pipeline",
 )
 def generate_audiobook_simple(self, book_id: int) -> Dict[str, Any]:
     """
-    简化版有声书生成（同步调用完整流水线）
-
-    直接调用 generate_audiobook，适合不需要 Celery Chain 异步调用的场景。
+    简化版有声书生成（直接调用编排器）
 
     Args:
         book_id: 书籍ID
@@ -1092,24 +1100,7 @@ def generate_audiobook_simple(self, book_id: int) -> Dict[str, Any]:
     Returns:
         dict: 执行结果
     """
-    logger.info(f"[Book {book_id}] 启动简化版生成流水线")
-
-    try:
-        result = generate_audiobook(book_id)
-        return {
-            "book_id": book_id,
-            "task_id": self.request.id,
-            "status": "completed",
-            "result": result,
-        }
-    except Exception as e:
-        logger.error(f"[Book {book_id}] 简化版流水线执行失败: {e}")
-        return {
-            "book_id": book_id,
-            "task_id": self.request.id,
-            "status": "failed",
-            "error": str(e),
-        }
+    return generate_audiobook(book_id)
 
 
 # ===========================================
