@@ -9,6 +9,7 @@
 """
 
 import hashlib
+import logging
 import os
 from datetime import datetime, timedelta
 
@@ -19,10 +20,13 @@ from core.database import get_db
 from core.config import settings
 from models import Book
 from models.model_book import SourceType, BookStatus
+from models.model_chapter import ChapterStatus
 from services.svc_epub_parser import EPUBParserService
 from services.svc_minio_storage import get_storage_service
+from services.svc_chapter_cleaner import clean_chapter_text
 
 
+logger = logging.getLogger("audiobook.upload")
 router = APIRouter(prefix="/upload", tags=["文件上传"])
 
 
@@ -100,21 +104,53 @@ async def upload_epub(
         book.author = result.get("author")
         book.total_chapters = result.get("chapter_count", 0)
 
-        # 保存章节
+        # 保存章节+上传清洗文本到 MinIO
         from models import Chapter
+        from services.svc_chapter_cleaner import clean_chapter_text
 
         chapters_data = result.get("chapters", [])
         for idx, ch in enumerate(chapters_data):
+            chapter_index = idx + 1
+            raw_content = ch.get("content", "")
+            chapter_title = ch.get("title", f"第{chapter_index}章")
+
+            # 清洗：只保留正文，去除 HTML/版权等
+            cleaned_text = clean_chapter_text(raw_content, chapter_title)
+
+            # 上传清洗后的正文到 MinIO
+            try:
+                minio_path = storage.upload_chapter_text(
+                    book_id=book.id,
+                    chapter_index=chapter_index,
+                    text=cleaned_text,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"章节文本上传 MinIO 失败: {e}"
+                )
+                minio_path = cleaned_text  # 降级：存文本
+
+            # DB 只存预览（前500字符）+ MinIO 路径
+            preview = cleaned_text[:500] if cleaned_text else ""
+
             chapter = Chapter(
                 book_id=book.id,
-                chapter_index=idx + 1,
-                title=ch.get("title"),
-                raw_text=ch.get("content"),
-                cleaned_text=parser.clean_html(ch.get("content", "")),
+                chapter_index=chapter_index,
+                title=chapter_title,
+                raw_text=preview,
+                cleaned_text=minio_path,
             )
             db.add(chapter)
 
         db.commit()
+
+        # ── 事件驱动：清理文本就绪 → 触发逐章处理 ──
+        from tasks.task_pipeline import process_chapter
+        for chapter in db.query(Chapter).filter(Chapter.book_id == book.id).all():
+            process_chapter.delay(chapter.id)
+        logger.info(
+            f"上传完成，已触发 {book.total_chapters} 章逐章处理"
+        )
 
         return {
             "book_id": book.id,

@@ -58,14 +58,13 @@ class AudioSegment(Base):
     __tablename__ = "audio_segments"
 
     # 主键
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
     # 外键关联
     chapter_id = Column(
         Integer,
         ForeignKey("chapters.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     # 片段序号
@@ -90,7 +89,7 @@ class AudioSegment(Base):
         Enum(SegmentStatus),
         default=SegmentStatus.PENDING,
         nullable=False,
-        index=True,
+        comment="处理状态",
     )
 
     # MiniMax 调用信息
@@ -123,9 +122,11 @@ class AudioSegment(Base):
     # 关联关系
     chapter = relationship("Chapter", back_populates="segments")
 
-    # 索引
+    # 索引：优化片段查询
     __table_args__ = (
-        Index("ix_segments_chapter_index", "chapter_id", "segment_index", unique=True),
+        Index("ix_segments_chapter_index", "chapter_id", "segment_index", unique=True),  # 排序+唯一
+        Index("ix_segments_chapter_status", "chapter_id", "status"),                      # 按章节+状态
+        Index("ix_segments_status", "status"),                                             # 全局状态筛选
     )
 
     def __repr__(self) -> str:

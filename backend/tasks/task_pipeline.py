@@ -116,9 +116,10 @@ class PipelineTask(Task):
         TimeoutError,
     )
     retry_backoff = True
-    retry_backoff_max = 300
+    retry_backoff_max = 120            # 最大退避时间（秒）
     retry_jitter = True
-    max_retries = 3
+    max_retries = 8                    # 最多重试8次
+    default_retry_delay = 10           # 初始重试延迟10秒
 
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         """任务失败回调"""
@@ -204,11 +205,55 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
         from models.model_book import BookStatus
         from models.model_chapter import ChapterStatus
         from services.svc_epub_parser import EPUBParserService
+        from services.svc_chapter_cleaner import clean_chapter_text, clean_chapter_with_report
         from services.svc_minio_storage import get_storage_service
 
         book = db.query(Book).filter(Book.id == book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {book_id}")
+
+        # ── 检查章节是否已存在（上传时可能已解析） ──
+        existing_chapters = (
+            db.query(Chapter)
+            .filter(Chapter.book_id == book_id)
+            .count()
+        )
+        if existing_chapters > 0:
+            chapters = db.query(Chapter).filter(Chapter.book_id == book_id).all()
+            chapter_ids = [ch.id for ch in chapters]
+            logger.info(
+                f"[Book {book_id}] 章节已存在 ({existing_chapters} 章)，跳过解析"
+            )
+
+            # 检查并确保每章的清洗文本已上传到 MinIO
+            storage = get_storage_service()
+            for ch in chapters:
+                # 如果 cleaned_text 是文本内容而非路径，上传到 MinIO
+                if ch.cleaned_text and not ch.cleaned_text.startswith("chapters/"):
+                    try:
+                        path = storage.upload_chapter_text(
+                            book_id=book_id,
+                            chapter_index=ch.chapter_index,
+                            text=ch.cleaned_text,
+                        )
+                        ch.cleaned_text = path
+                        logger.debug(
+                            f"[Chapter {ch.id}] 清洗文本已上传 MinIO: {path}"
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            f"[Chapter {ch.id}] MinIO 上传失败: {e}"
+                        )
+            db.commit()
+
+            return {
+                "book_id": book_id,
+                "chapter_ids": chapter_ids,
+                "chapter_count": len(chapter_ids),
+                "stage": PipelineStage.PARSING.value,
+                "success": True,
+                "skipped": True,
+            }
 
         try:
             # 更新状态
@@ -222,7 +267,6 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
             storage = None
 
             if file_path and file_path.startswith("epub/"):
-                # 文件在 MinIO 中，需要下载
                 storage = get_storage_service()
                 try:
                     file_content = storage.download_file(
@@ -234,7 +278,6 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
                     logger.error(f"[Book {book_id}] 从 MinIO 下载文件失败: {e}")
                     raise EPUBParseError(f"无法从存储获取文件: {e}")
             elif file_path and os.path.exists(file_path):
-                # 本地文件
                 with open(file_path, "rb") as f:
                     file_content = f.read()
             else:
@@ -263,17 +306,52 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
                 )
                 book.cover_image_path = cover_path
 
-            # 创建章节记录
+            # ── 优化：章节拆分 + 正文清洗 + 上传 MinIO ──
             chapters_data = result.get("chapters", [])
+            total_uploaded = 0
+            total_removed_chars = 0
+
+            if storage is None:
+                storage = get_storage_service()
+
             for idx, chapter_data in enumerate(chapters_data):
+                chapter_index = idx + 1
+                raw_content = chapter_data.get("content", "")
+                chapter_title = chapter_data.get("title", f"第{chapter_index}章")
+
+                # 清洗文本：只保留正文，丢弃页眉页脚/版权/广告等
+                cleaned_text, clean_report = clean_chapter_with_report(
+                    raw_content, chapter_title
+                )
+
+                # 上传清洗后的正文到 MinIO（供后续 DeepSeek 分析读取）
+                minio_path = storage.upload_chapter_text(
+                    book_id=book_id,
+                    chapter_index=chapter_index,
+                    text=cleaned_text,
+                )
+
+                # 数据库只存预览（前500字符）和 MinIO 路径
+                preview_text = cleaned_text[:500] if cleaned_text else ""
+
                 chapter = Chapter(
                     book_id=book_id,
-                    chapter_index=idx + 1,
-                    title=chapter_data.get("title", f"第{idx + 1}章"),
-                    raw_text=chapter_data.get("content"),
+                    chapter_index=chapter_index,
+                    title=chapter_title,
+                    raw_text=preview_text,                     # 仅预览
+                    cleaned_text=minio_path,                    # 存 MinIO 路径
                     status=ChapterStatus.PENDING,
                 )
                 db.add(chapter)
+
+                total_uploaded += 1
+                total_removed_chars += clean_report.removed_chars
+
+                if clean_report.quality_score < 0.5:
+                    logger.warning(
+                        f"[Book {book_id}] 章节 {chapter_index} 清洗质量偏低: "
+                        f"score={clean_report.quality_score:.2f}"
+                    )
 
             db.commit()
 
@@ -281,13 +359,28 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
             chapters = db.query(Chapter).filter(Chapter.book_id == book_id).all()
             chapter_ids = [ch.id for ch in chapters]
 
-            logger.info(f"[Book {book_id}] EPUB 解析完成，共 {len(chapter_ids)} 章节")
+            logger.info(
+                f"[Book {book_id}] EPUB 解析完成: {len(chapter_ids)} 章节, "
+                f"已上传 {total_uploaded} 个清洗文本到 MinIO, "
+                f"去除 {total_removed_chars} 非正文字符"
+            )
+
+            # ── 事件驱动：清洗文本就绪 → 触发逐章处理 ──
+            logger.info(
+                f"[Book {book_id}] 清洗文本已就绪，"
+                f"触发 {len(chapter_ids)} 章逐章处理..."
+            )
+            for ch_id in chapter_ids:
+                process_chapter.delay(ch_id)
+
             return {
                 "book_id": book_id,
                 "chapter_ids": chapter_ids,
                 "chapter_count": len(chapter_ids),
                 "stage": PipelineStage.PARSING.value,
                 "success": True,
+                "chapters_uploaded": total_uploaded,
+                "removed_chars": total_removed_chars,
             }
 
         except Exception as e:
@@ -313,7 +406,8 @@ def preprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
     """
     预处理单个章节文本
 
-    阶段二：对章节文本进行清洗和标准化
+    阶段二：对章节文本进行清洗和标准化。
+    如果章节文本已在解析阶段上传到 MinIO，则跳过（避免重复清洗）。
 
     Args:
         chapter_id: 章节ID
@@ -327,18 +421,32 @@ def preprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
         from models import Chapter
         from models.model_chapter import ChapterStatus
         from services.svc_text_preprocessor import TextPreprocessorService
+        from services.svc_minio_storage import get_storage_service
 
         chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
         if not chapter:
             raise ValueError(f"章节不存在: {chapter_id}")
 
         try:
-            # 更新状态为处理中
+            # ── 优化：检查文本是否已在 MinIO（解析阶段已清洗+上传） ──
+            if chapter.cleaned_text and chapter.cleaned_text.startswith("chapters/"):
+                logger.info(
+                    f"[Chapter {chapter_id}] 文本已在 MinIO, 跳过预处理 "
+                    f"(path={chapter.cleaned_text})"
+                )
+                return {
+                    "chapter_id": chapter_id,
+                    "paragraph_count": 0,
+                    "stage": PipelineStage.PREPROCESSING.value,
+                    "success": True,
+                    "skipped": True,
+                }
+
+            # 兼容旧数据：从 DB raw_text 做预处理
             chapter.status = ChapterStatus.PENDING
             chapter.updated_at = datetime.utcnow()
             db.commit()
 
-            # 执行预处理
             preprocessor = TextPreprocessorService()
             raw_text = chapter.raw_text or ""
 
@@ -351,8 +459,19 @@ def preprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
             # TTS 准备
             prepared = preprocessor.prepare_for_tts(raw_text)
 
-            # 更新章节
-            chapter.cleaned_text = prepared.get("processed_text", normalized)
+            # 对于旧数据，也尝试上传到 MinIO
+            try:
+                storage = get_storage_service()
+                minio_path = storage.upload_chapter_text(
+                    book_id=chapter.book_id,
+                    chapter_index=chapter.chapter_index,
+                    text=prepared.get("processed_text", normalized),
+                )
+                chapter.cleaned_text = minio_path
+            except Exception as e:
+                logger.warning(f"[Chapter {chapter_id}] MinIO 上传失败，仅存 DB: {e}")
+                chapter.cleaned_text = prepared.get("processed_text", normalized)
+
             chapter.updated_at = datetime.utcnow()
             db.commit()
 
@@ -448,13 +567,14 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
     Returns:
         dict: 分析结果
     """
-    logger.info(f"[Chapter {chapter_id}] 阶段三：开始 DeepSeek 分析")
+    logger.info(f"[Chapter {chapter_id}] 阶段三：开始 DeepSeek 分析（从 MinIO 读取文本）")
 
     with get_db_context() as db:
         from models import Chapter, Book
         from models.model_chapter import ChapterStatus
         from models.model_book import BookStatus
         from services.svc_deepseek_analyzer import DeepSeekAnalyzerService
+        from services.svc_minio_storage import get_storage_service
 
         chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
         if not chapter:
@@ -465,11 +585,11 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             raise ValueError(f"书籍不存在: {chapter.book_id}")
 
         try:
-            # 更新状态（只在第一个章节分析时更新书籍状态）
+            # 更新状态
             chapter.status = ChapterStatus.ANALYZING
             db.commit()
 
-            # 检查是否为第一个分析的章节，如果是则更新书籍状态
+            # 检查是否为第一个分析的章节
             analyzed_count = (
                 db.query(Chapter)
                 .filter(Chapter.book_id == chapter.book_id)
@@ -480,9 +600,54 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
                 book.status = BookStatus.ANALYZING
                 db.commit()
 
+            # ── 读取章节文本（优先 MinIO，回退 DB） ──
+            storage = get_storage_service()
+            text = ""
+
+            # 策略1: cleaned_text 是 MinIO 路径 → 从 MinIO 读取
+            if chapter.cleaned_text and chapter.cleaned_text.startswith("chapters/"):
+                try:
+                    text = storage.download_chapter_text(
+                        book_id=chapter.book_id,
+                        chapter_index=chapter.chapter_index,
+                    )
+                    logger.debug(
+                        f"[Chapter {chapter_id}] 从 MinIO 读取文本: {len(text)} 字符"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[Chapter {chapter_id}] MinIO 读取失败，回退到 DB: {e}"
+                    )
+
+            # 策略2: cleaned_text 是实际文本内容（非路径）→ 直接使用
+            if not text and chapter.cleaned_text:
+                if not chapter.cleaned_text.startswith("chapters/"):
+                    text = chapter.cleaned_text
+                    logger.debug(
+                        f"[Chapter {chapter_id}] 使用 DB cleaned_text: {len(text)} 字符"
+                    )
+
+            # 策略3: 回退到 raw_text
+            if not text and chapter.raw_text:
+                text = chapter.raw_text
+                logger.debug(
+                    f"[Chapter {chapter_id}] 使用 DB raw_text: {len(text)} 字符"
+                )
+
+            if not text or len(text.strip()) < 10:
+                logger.warning(f"[Chapter {chapter_id}] 文本内容过短，跳过分析")
+                chapter.status = ChapterStatus.ANALYZED
+                chapter.analysis_result = {"paragraphs": [], "characters": []}
+                db.commit()
+                return {
+                    "chapter_id": chapter_id,
+                    "warning": "文本内容过短",
+                    "stage": PipelineStage.ANALYZING.value,
+                    "success": True,
+                }
+
             # 执行分析
             analyzer = DeepSeekAnalyzerService()
-            text = chapter.cleaned_text or chapter.raw_text or ""
             result = analyzer.analyze_chapter(text)
 
             # 更新章节
@@ -634,7 +799,12 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
     base=PipelineTask,
     name="tasks.task_pipeline.synthesize_segment",
     queue="pipeline",
-    max_retries=3,
+    max_retries=6,
+    default_retry_delay=10,       # 首次重试等10秒，后续指数递增
+    autoretry_for=(MiniMaxApiError, ConnectionError, TimeoutError),
+    retry_backoff=True,
+    retry_backoff_max=120,         # 最大退避120秒
+    retry_jitter=True,
 )
 def synthesize_segment(self, segment_id: int) -> Dict[str, Any]:
     """
@@ -720,11 +890,26 @@ def synthesize_segment(self, segment_id: int) -> Dict[str, Any]:
             }
 
         except Exception as e:
-            logger.error(f"[Segment {segment_id}] TTS 合成失败: {e}")
+            error_msg = str(e)
+            logger.error(f"[Segment {segment_id}] TTS 合成失败: {error_msg}")
+
             segment.status = SegmentStatus.FAILED
-            segment.error_message = str(e)
+            segment.error_message = error_msg
             segment.retry_count = (segment.retry_count or 0) + 1
             db.commit()
+
+            # 余额不足不重试
+            if "insufficient balance" in error_msg or "1008" in error_msg:
+                logger.error(
+                    f"[Segment {segment_id}] MiniMax 余额不足，放弃重试"
+                )
+                return {
+                    "segment_id": segment_id,
+                    "stage": PipelineStage.SYNTHESIZING.value,
+                    "success": False,
+                    "error": error_msg,
+                }
+
             raise
 
 
@@ -809,6 +994,186 @@ def postprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
         except Exception as e:
             logger.error(f"[Chapter {chapter_id}] 音频后处理失败: {e}")
             raise
+
+
+# ===========================================
+# 章节处理流水线（事件驱动）
+# ===========================================
+
+@celery_app.task(
+    bind=True,
+    base=PipelineTask,
+    name="tasks.task_pipeline.process_chapter",
+    queue="pipeline",
+    max_retries=3,
+)
+def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
+    """
+    处理单个章节的完整流水线（事件驱动）
+
+    当清洗后的文本就绪时自动触发：
+    阶段三 DeepSeek 分析 → 阶段四创建片段 → 阶段五 TTS 合成 → 阶段六后处理
+
+    这是事件驱动的核心：每章独立串行，一章完成自动触发下一阶段。
+
+    Args:
+        chapter_id: 章节 ID
+
+    Returns:
+        dict: 处理结果
+    """
+    logger.info(f"[Chapter {chapter_id}] === 事件触发：开始逐章处理 ===")
+
+    from models import AudioSegment, Book
+    from models.model_book import BookStatus
+    from models.model_chapter import ChapterStatus
+    from models.model_segment import SegmentStatus
+
+    try:
+        # 阶段三：DeepSeek 分析
+        logger.info(f"[Chapter {chapter_id}] 阶段三：DeepSeek 分析")
+        analyze_chapter(chapter_id)
+
+        # 阶段四：创建音频片段
+        logger.info(f"[Chapter {chapter_id}] 阶段四：创建音频片段")
+        create_segments(chapter_id)
+
+        # 阶段五：TTS 合成（逐段）
+        logger.info(f"[Chapter {chapter_id}] 阶段五：TTS 合成")
+        with get_db_context() as db:
+            seg_list = (
+                db.query(AudioSegment)
+                .filter(AudioSegment.chapter_id == chapter_id)
+                .order_by(AudioSegment.segment_index)
+                .all()
+            )
+            seg_ids = [s.id for s in seg_list]
+
+        if seg_ids:
+            for seg_id in seg_ids:
+                synthesize_segment(seg_id)
+            logger.info(f"[Chapter {chapter_id}] 阶段五完成（{len(seg_ids)} 片段）")
+        else:
+            logger.warning(f"[Chapter {chapter_id}] 无音频片段，跳过 TTS")
+
+        # 阶段六：音频后处理
+        logger.info(f"[Chapter {chapter_id}] 阶段六：音频后处理")
+        postprocess_chapter(chapter_id)
+
+        # 检查是否所有章节都完成 → 触发发布
+        _try_publish_book(chapter_id)
+
+        logger.info(f"[Chapter {chapter_id}] ✅ 章节全部处理完成")
+        return {
+            "chapter_id": chapter_id,
+            "success": True,
+        }
+
+    except Exception as e:
+        logger.error(f"[Chapter {chapter_id}] 章节处理失败: {e}")
+        with get_db_context() as db:
+            from models import Chapter, Book
+            chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+            if chapter:
+                # 重试计数递增
+                retry_count = (chapter.failed_segments or 0) + 1
+
+                # 超过重试上限 → 标记为失败但继续其他章节
+                if retry_count >= 3:
+                    chapter.status = ChapterStatus.FAILED
+                    chapter.error_message = f"[{retry_count}次重试] {str(e)}"
+                    logger.warning(
+                        f"[Chapter {chapter_id}] 已达重试上限 ({retry_count}), "
+                        f"标记为失败，继续处理其他章节"
+                    )
+                else:
+                    # 记录失败但保留 PENDING 状态供后续重试
+                    chapter.failed_segments = retry_count
+                    chapter.status = ChapterStatus.PENDING
+                    chapter.error_message = str(e)
+
+                db.commit()
+
+                # 即使当前章节失败，也检查是否可以发布（部分完成）
+                _try_publish_book(chapter_id, retry_count >= 3)
+
+        # 不 re-raise：让其他章节继续处理
+        logger.info(
+            f"[Chapter {chapter_id}] 章节失败但不影响其他章节继续处理"
+        )
+        return {
+            "chapter_id": chapter_id,
+            "success": False,
+            "error": str(e),
+        }
+
+
+def _try_publish_book(
+    chapter_id: int, force_check: bool = False
+) -> None:
+    """
+    检查并触发书籍发布
+
+    当所有章节都完成或失败时，自动触发发布（部分完成）。
+
+    Args:
+        chapter_id: 任意章节 ID（用于反查 book_id）
+        force_check: 是否强制检查（章节失败时也检查）
+    """
+    from models import Chapter, Book
+    from models.model_chapter import ChapterStatus
+    from models.model_book import BookStatus
+    from sqlalchemy import func
+
+    with get_db_context() as db:
+        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        if not chapter:
+            return
+
+        book_id = chapter.book_id
+        total = (
+            db.query(func.count(Chapter.id))
+            .filter(Chapter.book_id == book_id)
+            .scalar()
+            or 0
+        )
+        done = (
+            db.query(func.count(Chapter.id))
+            .filter(
+                Chapter.book_id == book_id,
+                Chapter.status == ChapterStatus.DONE,
+            )
+            .scalar()
+            or 0
+        )
+        failed = (
+            db.query(func.count(Chapter.id))
+            .filter(
+                Chapter.book_id == book_id,
+                Chapter.status == ChapterStatus.FAILED,
+            )
+            .scalar()
+            or 0
+        )
+
+        # 所有章节都处于终态（DONE 或 FAILED）→ 触发发布
+        if done + failed >= total:
+            book = db.query(Book).filter(Book.id == book_id).first()
+            if book:
+                book.processed_chapters = done
+                book.status = BookStatus.PUBLISHING
+                if failed > 0:
+                    logger.warning(
+                        f"[Book {book_id}] 部分章节失败: "
+                        f"{done}/{total} 成功, {failed} 失败, 继续发布"
+                    )
+                else:
+                    logger.info(
+                        f"[Book {book_id}] 全部 {total} 章完成，触发发布"
+                    )
+                db.commit()
+                from tasks.task_pipeline import publish_book
+                publish_book.delay(book_id)
 
 
 # ===========================================
@@ -906,132 +1271,52 @@ def publish_book(self, book_id: int) -> Dict[str, Any]:
 )
 def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
     """
-    生成有声书完整流水线（Chain 编排版本）
+    生成有声书（事件驱动版本）
 
-    使用 Celery Chain 编排任务流，每个阶段使用 group 并行执行任务。
-    不在任务内调用 .get()，而是使用 chain 的回调机制。
-
-    流程：
-    1. 解析 EPUB（同步执行一次）→ 
-    2. 预处理（并行）→ 3. 分析（并行）→ 4. 创建片段（并行）→
-    5. TTS（并行）→ 6. 后处理（并行）→ 7. 发布
+    仅触发阶段一：EPUB 解析。
+    解析完成后自动触发逐章处理（process_chapter），
+    所有章节完成后自动触发发布（_try_publish_book）。
 
     Args:
         book_id: 书籍ID
 
     Returns:
-        dict: 流水线执行结果
+        dict: 执行结果
     """
-    import time
-
-    total_start = time.time()
-
     logger.info(f"=" * 60)
-    logger.info(f"[Book {book_id}] 开始有声书生成流水线")
+    logger.info(f"[Book {book_id}] 触发有声书生成（事件驱动）")
     logger.info(f"=" * 60)
 
-    from models import Book, Chapter, AudioSegment
     from models.model_book import BookStatus
-    from models.model_chapter import ChapterStatus
-    from celery import chain, group
-
-    with get_db_context() as db:
-        book = db.query(Book).filter(Book.id == book_id).first()
-        if not book:
-            raise ValueError(f"书籍不存在: {book_id}")
-
-        book.status = BookStatus.PENDING
-        db.commit()
 
     try:
-        # ========== 阶段一：解析 EPUB（直接同步执行）==========
-        logger.info(f"[Book {book_id}] === 阶段一：EPUB 解析 ===")
+        # 阶段一：EPUB 解析（process_chapter 会在此后自动触发）
         parse_result = parse_epub(book_id)
-        chapter_ids = parse_result["chapter_ids"]
+        chapter_ids = parse_result.get("chapter_ids", [])
 
-        if not chapter_ids:
-            raise ValueError("EPUB 解析后没有找到章节")
-
-        logger.info(f"[Book {book_id}] 阶段一完成，共 {len(chapter_ids)} 章节")
-
-        # ========== 构建 Chain ==========
-        # 每个阶段使用 group 并行执行，然后进入下一阶段
-
-        # 阶段二：预处理
-        logger.info(f"[Book {book_id}] === 阶段二：文本预处理 ===")
-        preprocess_workflow = chain(
-            group(preprocess_chapter.s(ch_id) for ch_id in chapter_ids),
+        logger.info(
+            f"[Book {book_id}] 流水线已启动: "
+            f"{len(chapter_ids)} 章清洗文本已就绪，逐章处理已排队"
         )
-        preprocess_result = preprocess_workflow.apply_async()
-        # 使用 wait 轮询状态（而非 .get()）
-        _wait_for_result(preprocess_result, timeout=1800)
 
-        # 阶段三：分析
-        logger.info(f"[Book {book_id}] === 阶段三：DeepSeek 分析 ===")
-        analyze_workflow = chain(
-            group(analyze_chapter.s(ch_id) for ch_id in chapter_ids),
-        )
-        analyze_result = analyze_workflow.apply_async()
-        _wait_for_result(analyze_result, timeout=3600)
+        # 不需要等待 - process_chapter 会在 celery 中自动执行
+        return {
+            "book_id": book_id,
+            "chapter_count": len(chapter_ids),
+            "status": "processing",
+            "note": "逐章处理已自动触发",
+        }
 
-        # 阶段四：创建片段
-        logger.info(f"[Book {book_id}] === 阶段四：创建音频片段 ===")
-        create_workflow = chain(
-            group(create_segments.s(ch_id) for ch_id in chapter_ids),
-        )
-        create_result = create_workflow.apply_async()
-        _wait_for_result(create_result, timeout=600)
-
-        # 获取片段 ID
+    except Exception as e:
+        logger.error(f"[Book {book_id}] 流水线启动失败: {e}")
         with get_db_context() as db:
-            segments = db.query(AudioSegment).filter(
-                AudioSegment.chapter_id.in_(chapter_ids)
-            ).all()
-            segment_ids = [seg.id for seg in segments]
-
-        if not segment_ids:
-            raise ValueError("创建音频片段后未找到任何片段")
-
-        logger.info(f"[Book {book_id}] 共创建 {len(segment_ids)} 个音频片段")
-
-        # 阶段五：TTS
-        logger.info(f"[Book {book_id}] === 阶段五：TTS 合成 ===")
-        synthesize_workflow = chain(
-            group(synthesize_segment.s(seg_id) for seg_id in segment_ids),
-        )
-        synthesize_result = synthesize_workflow.apply_async()
-        _wait_for_result(synthesize_result, timeout=7200)
-
-        # 阶段六：后处理
-        logger.info(f"[Book {book_id}] === 阶段六：音频后处理 ===")
-        postprocess_workflow = chain(
-            group(postprocess_chapter.s(ch_id) for ch_id in chapter_ids),
-        )
-        postprocess_result = postprocess_workflow.apply_async()
-        _wait_for_result(postprocess_result, timeout=3600)
-
-        # 阶段七：发布
-        logger.info(f"[Book {book_id}] === 阶段七：自动发布 ===")
-        publish_book.delay(book_id)
-
-        # 更新最终状态
-        from sqlalchemy import func
-        with get_db_context() as db:
+            from models import Book
             book = db.query(Book).filter(Book.id == book_id).first()
             if book:
-                book.status = BookStatus.DONE
-                book.updated_at = datetime.utcnow()
-
-                total_duration = (
-                    db.query(func.sum(Chapter.audio_duration))
-                    .filter(Chapter.book_id == book_id)
-                    .scalar()
-                    or 0
-                )
-                book.total_duration = total_duration
+                book.status = BookStatus.FAILED
+                book.error_message = str(e)
                 db.commit()
-
-        total_time = time.time() - total_start
+        raise
         logger.info(f"=" * 60)
         logger.info(f"[Book {book_id}] 有声书生成流水线完成!")
         logger.info(f"[Book {book_id}] 总耗时: {total_time:.1f}s")

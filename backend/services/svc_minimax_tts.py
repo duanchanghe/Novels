@@ -29,6 +29,13 @@ from collections import defaultdict
 import httpx
 
 from core.config import settings
+from core.constants import (
+    VOICE_MAP_SIMPLE,
+    ROLE_VOICE_MAP,
+    EMOTION_PARAM_MAP,
+    DEFAULT_EMOTION_CONFIG,
+    INTENSITY_FACTOR_MAP,
+)
 from core.exceptions import MiniMaxApiError
 from utils.util_rate_limiter import TokenBucket, RateLimiter
 from utils.util_retry import retry_sync, exponential_backoff
@@ -150,149 +157,49 @@ class MiniMaxTTSService:
     MiniMax TTS 服务 - 增强版
 
     提供语音合成功能，支持多音色和情感参数，以及超高品质音质优化。
+    音色与情感映射表统一来源于 core.constants（唯一数据源）。
     """
 
     # ===========================================
-    # 音色映射表（扩展 - 包含中文网络小说角色类型）
+    # 音色映射表 → 来源 core.constants.VOICE_MAP_SIMPLE
     # ===========================================
-    VOICE_MAP = {
-        # 旁白音色
-        "narrator": "male-qn-qingse",
-        "male-narrator": "male-qn-qingse",
-        "female-narrator": "female-tianmei",
-        # 男性音色
-        "male": "male-qn-qingse",
-        "male-young": "male-qn-qingse",
-        "male-adult": "male-qn-qingse",
-        "male-elderly": "male-yunqi",
-        "male-old": "male-yunqi",
-        "male-deep": "male-shaon",
-        "male-villain": "male-shaon",
-        "male-hero": "male-qn-qingse",
-        "male-protagonist": "male-qn-qingse",
-        # 女性音色
-        "female": "female-tianmei",
-        "female-young": "female-tianmei",
-        "female-adult": "female-tianmei",
-        "female-elderly": "female-ss",
-        "female-old": "female-ss",
-        "female-child": "female-tianmei",
-        "female-sweet": "female-tianmei",
-        "female-heroine": "female-tianmei",
-        "female-protagonist": "female-tianmei",
-        # 网络小说特有角色类型
-        "仙尊": "male-yunqi",
-        "魔帝": "male-shaon",
-        "剑圣": "male-qn-qingse",
-        "道祖": "male-yunqi",
-        "长老": "male-yunqi",
-        "宗主": "male-yunqi",
-        "掌门": "male-qn-qingse",
-        "前辈": "male-qn-qingse",
-        "师兄": "male-qn-qingse",
-        "师父": "male-yunqi",
-        "徒弟": "male-qn-qingse",
-        "圣女": "female-tianmei",
-        "仙女": "female-tianmei",
-        "仙子": "female-tianmei",
-        "妖女": "female-tianmei",
-        "魔女": "female-tianmei",
-        "女帝": "female-tianmei",
-        "女皇": "female-tianmei",
-        # 默认
-        "default": "male-qn-qingse",
-        "unknown": "male-qn-qingse",
-    }
+    VOICE_MAP = VOICE_MAP_SIMPLE
 
     # ===========================================
-    # 情感参数映射（细分强度 - 增强版）
+    # 情感参数映射 → 来源 core.constants.EMOTION_PARAM_MAP
+    # （TTS 服务扩展了 volume_factor 字段，默认 1.0）
     # ===========================================
-    EMOTION_MAP = {
-        # 平静
-        "平静_low": {"emotion": "neutral", "speed_factor": 0.95, "pitch_factor": 0, "volume_factor": 1.0},
-        "平静_medium": {"emotion": "neutral", "speed_factor": 1.0, "pitch_factor": 0, "volume_factor": 1.0},
-        "平静_high": {"emotion": "neutral", "speed_factor": 1.05, "pitch_factor": 0, "volume_factor": 1.0},
-        "neutral_low": {"emotion": "neutral", "speed_factor": 0.95, "pitch_factor": 0, "volume_factor": 1.0},
-        "neutral_medium": {"emotion": "neutral", "speed_factor": 1.0, "pitch_factor": 0, "volume_factor": 1.0},
-        "neutral_high": {"emotion": "neutral", "speed_factor": 1.05, "pitch_factor": 0, "volume_factor": 1.0},
-        # 高兴
-        "高兴_low": {"emotion": "happy", "speed_factor": 1.05, "pitch_factor": 0.1, "volume_factor": 1.05},
-        "高兴_medium": {"emotion": "happy", "speed_factor": 1.1, "pitch_factor": 0.2, "volume_factor": 1.1},
-        "高兴_high": {"emotion": "happy", "speed_factor": 1.15, "pitch_factor": 0.3, "volume_factor": 1.15},
-        "开心_low": {"emotion": "happy", "speed_factor": 1.05, "pitch_factor": 0.1, "volume_factor": 1.05},
-        "开心_medium": {"emotion": "happy", "speed_factor": 1.1, "pitch_factor": 0.2, "volume_factor": 1.1},
-        "开心_high": {"emotion": "happy", "speed_factor": 1.15, "pitch_factor": 0.3, "volume_factor": 1.15},
-        "happy_low": {"emotion": "happy", "speed_factor": 1.05, "pitch_factor": 0.1, "volume_factor": 1.05},
-        "happy_medium": {"emotion": "happy", "speed_factor": 1.1, "pitch_factor": 0.2, "volume_factor": 1.1},
-        "happy_high": {"emotion": "happy", "speed_factor": 1.15, "pitch_factor": 0.3, "volume_factor": 1.15},
-        # 悲伤
-        "悲伤_low": {"emotion": "sad", "speed_factor": 0.95, "pitch_factor": -0.2, "volume_factor": 0.95},
-        "悲伤_medium": {"emotion": "sad", "speed_factor": 0.9, "pitch_factor": -0.25, "volume_factor": 0.9},
-        "悲伤_high": {"emotion": "sad", "speed_factor": 0.85, "pitch_factor": -0.3, "volume_factor": 0.85},
-        "伤心_low": {"emotion": "sad", "speed_factor": 0.95, "pitch_factor": -0.2, "volume_factor": 0.95},
-        "伤心_medium": {"emotion": "sad", "speed_factor": 0.9, "pitch_factor": -0.25, "volume_factor": 0.9},
-        "伤心_high": {"emotion": "sad", "speed_factor": 0.85, "pitch_factor": -0.3, "volume_factor": 0.85},
-        "sad_low": {"emotion": "sad", "speed_factor": 0.95, "pitch_factor": -0.2, "volume_factor": 0.95},
-        "sad_medium": {"emotion": "sad", "speed_factor": 0.9, "pitch_factor": -0.25, "volume_factor": 0.9},
-        "sad_high": {"emotion": "sad", "speed_factor": 0.85, "pitch_factor": -0.3, "volume_factor": 0.85},
-        # 愤怒
-        "愤怒_low": {"emotion": "angry", "speed_factor": 1.1, "pitch_factor": 0.3, "volume_factor": 1.1},
-        "愤怒_medium": {"emotion": "angry", "speed_factor": 1.15, "pitch_factor": 0.4, "volume_factor": 1.15},
-        "愤怒_high": {"emotion": "angry", "speed_factor": 1.2, "pitch_factor": 0.5, "volume_factor": 1.2},
-        "生气_low": {"emotion": "angry", "speed_factor": 1.1, "pitch_factor": 0.3, "volume_factor": 1.1},
-        "生气_medium": {"emotion": "angry", "speed_factor": 1.15, "pitch_factor": 0.4, "volume_factor": 1.15},
-        "生气_high": {"emotion": "angry", "speed_factor": 1.2, "pitch_factor": 0.5, "volume_factor": 1.2},
-        "angry_low": {"emotion": "angry", "speed_factor": 1.1, "pitch_factor": 0.3, "volume_factor": 1.1},
-        "angry_medium": {"emotion": "angry", "speed_factor": 1.15, "pitch_factor": 0.4, "volume_factor": 1.15},
-        "angry_high": {"emotion": "angry", "speed_factor": 1.2, "pitch_factor": 0.5, "volume_factor": 1.2},
-        # 紧张/害怕
-        "紧张_low": {"emotion": "fearful", "speed_factor": 1.1, "pitch_factor": 0.1, "volume_factor": 1.05},
-        "紧张_medium": {"emotion": "fearful", "speed_factor": 1.15, "pitch_factor": 0.15, "volume_factor": 1.1},
-        "紧张_high": {"emotion": "fearful", "speed_factor": 1.2, "pitch_factor": 0.2, "volume_factor": 1.15},
-        "害怕_low": {"emotion": "fearful", "speed_factor": 1.1, "pitch_factor": 0.1, "volume_factor": 1.05},
-        "害怕_medium": {"emotion": "fearful", "speed_factor": 1.15, "pitch_factor": 0.15, "volume_factor": 1.1},
-        "害怕_high": {"emotion": "fearful", "speed_factor": 1.2, "pitch_factor": 0.2, "volume_factor": 1.15},
-        "fearful_low": {"emotion": "fearful", "speed_factor": 1.1, "pitch_factor": 0.1, "volume_factor": 1.05},
-        "fearful_medium": {"emotion": "fearful", "speed_factor": 1.15, "pitch_factor": 0.15, "volume_factor": 1.1},
-        "fearful_high": {"emotion": "fearful", "speed_factor": 1.2, "pitch_factor": 0.2, "volume_factor": 1.15},
-        # 惊讶
-        "惊讶": {"emotion": "surprise", "speed_factor": 1.15, "pitch_factor": 0.4, "volume_factor": 1.15},
-        "震惊": {"emotion": "surprise", "speed_factor": 1.15, "pitch_factor": 0.4, "volume_factor": 1.15},
-        "surprise": {"emotion": "surprise", "speed_factor": 1.15, "pitch_factor": 0.4, "volume_factor": 1.15},
-        # 温柔
-        "温柔": {"emotion": "gentle", "speed_factor": 0.9, "pitch_factor": -0.1, "volume_factor": 0.95},
-        "柔和": {"emotion": "gentle", "speed_factor": 0.9, "pitch_factor": -0.1, "volume_factor": 0.95},
-        "gentle": {"emotion": "gentle", "speed_factor": 0.9, "pitch_factor": -0.1, "volume_factor": 0.95},
-        # 严肃
-        "严肃": {"emotion": "serious", "speed_factor": 0.9, "pitch_factor": -0.1, "volume_factor": 1.0},
-        "serious": {"emotion": "serious", "speed_factor": 0.9, "pitch_factor": -0.1, "volume_factor": 1.0},
-        # 冷漠
-        "冷漠": {"emotion": "serious", "speed_factor": 0.85, "pitch_factor": -0.15, "volume_factor": 0.9},
-        # 嘲讽
-        "嘲讽": {"emotion": "angry", "speed_factor": 1.05, "pitch_factor": 0.25, "volume_factor": 1.05},
-        "嘲讽_low": {"emotion": "angry", "speed_factor": 1.0, "pitch_factor": 0.2, "volume_factor": 1.0},
-        "嘲讽_high": {"emotion": "angry", "speed_factor": 1.1, "pitch_factor": 0.3, "volume_factor": 1.1},
-        # 默认
-        "neutral": {"emotion": "neutral", "speed_factor": 1.0, "pitch_factor": 0, "volume_factor": 1.0},
-        "default": {"emotion": "neutral", "speed_factor": 1.0, "pitch_factor": 0, "volume_factor": 1.0},
-    }
+    @staticmethod
+    def _build_emotion_map():
+        """从共享常量构建带 volume_factor 的情感映射表"""
+        result = {}
+        for key, config in EMOTION_PARAM_MAP.items():
+            result[key] = {
+                "emotion": config["emotion"],
+                "speed_factor": config["speed_factor"],
+                "pitch_factor": config["pitch"],
+                "volume_factor": 1.0,
+            }
+        # 补充英文 key（如 happy/sad/angry 等）
+        en_aliases = {
+            "happy": "高兴", "sad": "悲伤", "angry": "愤怒",
+            "fearful": "紧张", "surprise": "惊讶", "gentle": "温柔",
+            "serious": "严肃", "neutral": "平静",
+        }
+        for en, cn in en_aliases.items():
+            if cn in EMOTION_PARAM_MAP:
+                c = EMOTION_PARAM_MAP[cn]
+                result[f"{en}_low"] = {"emotion": c["emotion"], "speed_factor": c["speed_factor"] - 0.05, "pitch_factor": c["pitch"] - 0.05, "volume_factor": 0.95}
+                result[f"{en}_medium"] = {"emotion": c["emotion"], "speed_factor": c["speed_factor"], "pitch_factor": c["pitch"], "volume_factor": 1.0}
+                result[f"{en}_high"] = {"emotion": c["emotion"], "speed_factor": c["speed_factor"] + 0.05, "pitch_factor": c["pitch"] + 0.1, "volume_factor": 1.05}
+        return result
 
-    # ===========================================
-    # 角色类型到音色的映射（用于自动选择）
-    # ===========================================
-    ROLE_TYPE_VOICE_MAP = {
-        "男主": "male-qn",
-        "女主": "female-shaon",
-        "反派": "male-tian",
-        "老人": "male-yun",
-        "儿童": "female-xiang",
-        "旁白": "male-qn",
-        "配角": "male-qn",
-        "仙尊": "male-yun",
-        "魔帝": "male-tian",
-        "仙女": "female-shaon",
-        "师父": "male-yun",
-        "师兄": "male-qn",
+    EMOTION_MAP = _build_emotion_map.__func__()
+
+    # 默认回退情感
+    DEFAULT_EMOTION_ENTRY = {
+        "emotion": "neutral", "speed_factor": 1.0,
+        "pitch_factor": 0, "volume_factor": 1.0,
     }
 
     def __init__(self, rate_limit_qps: float = 10.0):
@@ -478,9 +385,9 @@ class MiniMaxTTSService:
                         "stream": False,
                         "voice_setting": {
                             "voice_id": mapped_voice_id,
-                            "speed": int(emotion_params["speed"] * 100),  # MiniMax 使用整数（百分比）
-                            "vol": int(emotion_params["volume"] * 100),
-                            "pitch": int(emotion_params["pitch"] * 100),
+                            "speed": int(float(emotion_params["speed"]) * 100),  # MiniMax 使用整数（百分比）
+                            "vol": int(float(emotion_params["volume"]) * 100),
+                            "pitch": int(float(emotion_params["pitch"]) * 100),
                         },
                         "audio_setting": {
                             "sample_rate": 32000,
@@ -513,8 +420,26 @@ class MiniMaxTTSService:
 
                 result = response.json()
 
-                # 调试日志
-                logger.info(f"MiniMax API 响应: {result}")
+                # 检查业务层面的错误码（MiniMax 在 HTTP 200 时也可能返回业务错误）
+                base_resp = result.get("base_resp", {})
+                status_code = base_resp.get("status_code", 0)
+
+                if status_code == 1002:
+                    # 速率限制 (RPM/TPM exceeded)
+                    _tts_cost_stats.add_error()
+                    logger.warning(f"MiniMax 速率限制: {base_resp.get('status_msg')}")
+                    raise MiniMaxApiError(
+                        f"MiniMax 速率限制: {base_resp.get('status_msg', 'RPM exceeded')}"
+                    )
+                elif status_code == 1000:
+                    # 成功
+                    pass
+                elif status_code != 0:
+                    # 其他业务错误
+                    _tts_cost_stats.add_error()
+                    raise MiniMaxApiError(
+                        f"MiniMax 业务错误 ({status_code}): {base_resp.get('status_msg', 'unknown')}"
+                    )
 
                 # 检查是否有音频数据
                 if "data" in result and "audio" in result["data"]:

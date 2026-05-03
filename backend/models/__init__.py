@@ -10,7 +10,7 @@
 
 from .model_book import Book, BookStatus, SourceType
 from .model_chapter import Chapter, ChapterStatus
-from .model_segment import AudioSegment
+from .model_segment import AudioSegment, SegmentStatus
 from .model_task import TTSTask
 from .model_voice import VoiceProfile
 from .model_channel import PublishChannel

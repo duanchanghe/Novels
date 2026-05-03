@@ -98,6 +98,20 @@ class Settings(BaseSettings):
     AUDIO_SAMPLE_RATE: int = 44100
     AUDIO_BITRATE: int = 192
     AUDIO_CROSSFADE_MS: int = 20
+    AUDIO_BATCH_SIZE: int = 20          # 音频片段批处理大小（控制内存峰值）
+    AUDIO_HIGH_QUALITY_BITRATE: str = "320k"
+
+    # ---------- 缓存配置 ----------
+    CACHE_TTL_SHORT: int = 30           # 短期缓存（秒）：列表查询等
+    CACHE_TTL_MEDIUM: int = 300         # 中期缓存（秒）：音色列表等
+    CACHE_TTL_LONG: int = 3600          # 长期缓存（秒）：章节详情等
+    DEEPSEEK_CACHE_TTL: int = 86400     # DeepSeek 分析缓存 TTL（秒，默认 24h）
+    DEEPSEEK_CACHE_MAX_SIZE: int = 5000 # DeepSeek 分析缓存最大条目
+
+    # ---------- 限流配置 ----------
+    TTS_RATE_LIMIT_QPS: float = 10.0    # TTS API 每秒最大请求数
+    DEEPSEEK_RATE_LIMIT_QPS: float = 5.0 # DeepSeek API 每秒最大请求数
+    RATE_LIMITER_BACKEND: str = "redis" # 限流器后端（"redis" | "local"）
 
     # ---------- 日志配置 ----------
     LOG_LEVEL: str = "INFO"

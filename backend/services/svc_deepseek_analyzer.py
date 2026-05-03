@@ -296,69 +296,106 @@ POLYPHONE_RULES = {
 
 class AnalysisCache:
     """
-    分析结果缓存（线程安全）
+    分析结果缓存（线程安全 + Redis 二级缓存）
 
     使用内存缓存 + MD5 哈希避免重复分析相同文本。
-    支持 LRU 淘汰策略，防止内存无限增长。
+    支持 LRU 淘汰策略 + Redis 持久化二级缓存。
     """
 
-    def __init__(self, ttl_seconds: int = 3600, max_size: int = 1000):
+    def __init__(self, ttl_seconds: int = 3600, max_size: int = 1000, redis_url: str = None):
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._ttl = ttl_seconds
         self._max_size = max_size
         self._lock = threading.Lock()
-        self._access_order: List[str] = []  # 用于 LRU
+        self._access_order: List[str] = []
+        self._redis_url = redis_url
+        self._redis_client = None  # 延迟初始化
+
+    def _get_redis(self):
+        """延迟初始化 Redis 客户端"""
+        if self._redis_client is None and self._redis_url:
+            try:
+                import redis as _redis
+                self._redis_client = _redis.from_url(self._redis_url, decode_responses=True,
+                    socket_connect_timeout=2, socket_timeout=2)
+            except Exception:
+                self._redis_client = False  # 标记为不可用
+        return self._redis_client if self._redis_client is not False else None
+
+    def _get_redis_key(self, key: str) -> str:
+        return f"deepseek_cache:{key}"
 
     def _get_key(self, text: str) -> str:
         """计算文本的哈希键"""
         return hashlib.md5(text.encode("utf-8")).hexdigest()
 
     def get(self, text: str) -> Optional[Dict[str, Any]]:
-        """获取缓存的分析结果"""
+        """获取缓存的分析结果（L1: 内存 → L2: Redis）"""
         key = self._get_key(text)
-        
+
         with self._lock:
             entry = self._cache.get(key)
-
             if entry:
-                # 检查是否过期
                 if datetime.utcnow() - entry["cached_at"] < timedelta(seconds=self._ttl):
-                    # 更新访问顺序（LRU）
                     if key in self._access_order:
                         self._access_order.remove(key)
                     self._access_order.append(key)
-                    
-                    logger.debug(f"缓存命中: {key[:8]}...")
+                    logger.debug(f"L1 缓存命中: {key[:8]}...")
                     return entry["result"]
                 else:
-                    # 过期，删除
                     del self._cache[key]
                     if key in self._access_order:
                         self._access_order.remove(key)
 
+        # L2: Redis 二级缓存
+        redis_client = self._get_redis()
+        if redis_client:
+            try:
+                redis_key = self._get_redis_key(key)
+                data = redis_client.get(redis_key)
+                if data:
+                    result = json.loads(data)
+                    # 回填 L1 缓存
+                    with self._lock:
+                        self._cache[key] = {
+                            "result": result,
+                            "cached_at": datetime.utcnow(),
+                        }
+                    logger.debug(f"L2 缓存命中: {key[:8]}...")
+                    return result
+            except Exception as e:
+                logger.debug(f"Redis 缓存读取失败: {e}")
+
         return None
 
     def set(self, text: str, result: Dict[str, Any]) -> None:
-        """设置缓存（带 LRU 淘汰）"""
+        """设置缓存（L1 + L2，带 LRU 淘汰）"""
         key = self._get_key(text)
-        
+
         with self._lock:
-            # 检查容量，淘汰最久未使用的
             if len(self._cache) >= self._max_size and key not in self._cache:
                 oldest_key = self._access_order.pop(0) if self._access_order else None
                 if oldest_key:
                     self._cache.pop(oldest_key, None)
-                    logger.debug(f"缓存淘汰: {oldest_key[:8]}...")
+                    logger.debug(f"L1 缓存淘汰: {oldest_key[:8]}...")
 
             self._cache[key] = {
                 "result": result,
                 "cached_at": datetime.utcnow(),
             }
-            
-            # 更新访问顺序
+
             if key in self._access_order:
                 self._access_order.remove(key)
             self._access_order.append(key)
+
+        # L2: 写入 Redis（异步友好，失败不影响主流程）
+        redis_client = self._get_redis()
+        if redis_client:
+            try:
+                redis_key = self._get_redis_key(key)
+                redis_client.setex(redis_key, self._ttl, json.dumps(result, ensure_ascii=False))
+            except Exception as e:
+                logger.debug(f"Redis 缓存写入失败: {e}")
 
     def clear(self) -> None:
         """清空缓存"""
@@ -376,8 +413,13 @@ class AnalysisCache:
             }
 
 
-# 全局缓存实例
-_analysis_cache = AnalysisCache(ttl_seconds=3600, max_size=1000)
+# 全局缓存实例（TTL: 24小时, 最大: 5000条, 支持 Redis 二级缓存）
+# DeepSeek 分析结果是确定性的（相同输入→相同输出），缓存越久成本越低
+_analysis_cache = AnalysisCache(
+    ttl_seconds=86400,
+    max_size=5000,
+    redis_url=settings.REDIS_URL or settings._redis_url if hasattr(settings, '_redis_url') else None,
+)
 
 
 class DeepSeekAnalyzerService:

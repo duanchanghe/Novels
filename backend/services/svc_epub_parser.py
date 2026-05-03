@@ -451,7 +451,296 @@ class EPUBParserService:
 
     def _extract_chapters(self, book: epub.EpubBook) -> List[Dict[str, Any]]:
         """
-        提取章节内容
+        按照 EPUB 目录（TOC）提取章节内容
+
+        优先使用 EPUB 的 NCX/NAV 目录结构分割章节，
+        而非简单按 HTML 文件拆分。
+        一个 HTML 文件可能包含多个章节，目录中的每一项
+        都对应一个独立的章节。
+
+        Args:
+            book: EpubBook 对象
+
+        Returns:
+            list: 按目录排序的章节列表
+        """
+        # ── 第一步：读取目录结构 ──
+        toc_items = self._flatten_toc(book.toc)
+
+        if toc_items:
+            # 有目录：按目录拆分
+            self.logger.info(f"使用 EPUB 目录拆分章节，共 {len(toc_items)} 项")
+            return self._extract_by_toc(book, toc_items)
+        else:
+            # 无目录：回退到按 HTML 文件拆分
+            self.logger.warning("EPUB 没有目录，回退到按文件拆分")
+            return self._extract_by_documents(book)
+
+    def _flatten_toc(self, toc: list, depth: int = 0) -> List[Dict[str, Any]]:
+        """
+        递归展开 EPUB 目录（TOC）为扁平列表
+
+        支持两种 TOC 格式：
+        1. 嵌套 (Link, [children]) 元组
+        2. 直接 Link 对象
+
+        Args:
+            toc: ebooklib 的 TOC 列表
+            depth: 当前深度
+
+        Returns:
+            list: 扁平化的目录项
+        """
+        items = []
+        order = 0
+
+        for entry in toc:
+            order += 1
+
+            # 格式1: (Link, [children]) 元组
+            if isinstance(entry, tuple) and len(entry) >= 2:
+                link = entry[0]
+                children = entry[1]
+
+                if hasattr(link, 'title') and hasattr(link, 'href'):
+                    items.append({
+                        "title": link.title or f"第{order}章",
+                        "href": link.href or "",
+                        "depth": depth,
+                        "play_order": order,
+                    })
+
+                if children:
+                    items.extend(self._flatten_toc(children, depth + 1))
+
+            # 格式2: 直接 Link 对象
+            elif hasattr(entry, 'title') and hasattr(entry, 'href'):
+                items.append({
+                    "title": entry.title or f"第{order}章",
+                    "href": entry.href or "",
+                    "depth": depth,
+                    "play_order": order,
+                })
+
+        return items
+
+    def _extract_by_toc(
+        self, book: epub.EpubBook, toc_items: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        按照目录结构提取章节
+
+        使用 BeautifulSoup 元素定位按锚点提取内容，
+        避免 HTML 残留（如 id="filepos..."）。
+
+        Args:
+            book: EpubBook 对象
+            toc_items: 扁平化的目录项
+
+        Returns:
+            list: 章节列表
+        """
+        from urllib.parse import unquote, urlparse
+
+        # ── 构建文档索引：文件名 → BeautifulSoup ──
+        doc_index = {}
+        for item in book.get_items():
+            if item.get_type() == ITEM_DOCUMENT:
+                file_name = item.get_name()
+                try:
+                    content = item.get_content()
+                    try:
+                        soup = BeautifulSoup(content, "xml")
+                        if soup.find() is None:
+                            soup = BeautifulSoup(content, "lxml")
+                    except Exception:
+                        soup = BeautifulSoup(content, "lxml")
+                    doc_index[file_name] = soup
+                except Exception as e:
+                    self.logger.warning(f"解析文档失败: {file_name} - {e}")
+
+        # ── 分组：按文件名将 TOC 项分组 ──
+        file_groups = {}  # {file_base: [(index, toc_entry), ...]}
+        for i, entry in enumerate(toc_items):
+            parsed = urlparse(entry["href"])
+            file_part = unquote(parsed.path)
+            file_base = file_part.split("/")[-1] if "/" in file_part else file_part
+
+            matched = file_base
+            if matched not in doc_index:
+                for key in doc_index:
+                    if key.endswith(matched) or matched in key:
+                        matched = key
+                        break
+
+            if matched not in file_groups:
+                file_groups[matched] = []
+            file_groups[matched].append((i, entry, parsed.fragment))
+
+        # ── 提取章节内容（BeautifulSoup 元素定位，拒绝 HTML 字符串操作） ──
+        chapters = []
+        seen_titles = set()
+
+        for file_name, entries in file_groups.items():
+            soup = doc_index.get(file_name)
+            if not soup:
+                continue
+
+            # 按原始顺序排序
+            entries.sort(key=lambda x: x[0])
+
+            for idx_in_group, (orig_idx, entry, fragment) in enumerate(entries):
+                title = entry["title"]
+                if title in seen_titles:
+                    continue
+                seen_titles.add(title)
+
+                if fragment:
+                    # 用 BeautifulSoup 定位锚点元素
+                    anchor_el = soup.find(id=fragment)
+                    if anchor_el is None:
+                        # 有些 EPUB 用 name 属性代替 id
+                        anchor_el = soup.find(attrs={"name": fragment})
+
+                    if anchor_el:
+                        text_parts = []
+
+                        # 收集当前锚点之后、下一个锚点之前的所有兄弟元素
+                        # 处理 next_siblings 时跳过空白/空节点
+                        for sibling in anchor_el.next_siblings:
+                            # 检查是否到达下一个锚点
+                            if hasattr(sibling, 'attrs'):
+                                skip = False
+                                for next_entry in entries[idx_in_group + 1:]:
+                                    next_frag = next_entry[2]
+                                    if next_frag:
+                                        sid = sibling.attrs.get("id", "")
+                                        sname = sibling.attrs.get("name", "") if hasattr(sibling, 'attrs') else ""
+                                        if sid == next_frag or sname == next_frag:
+                                            skip = True
+                                            break
+                                if skip:
+                                    break
+
+                            # 提取文本
+                            if hasattr(sibling, 'get_text'):
+                                t = sibling.get_text(strip=True)
+                                if t:
+                                    text_parts.append(t)
+                            elif isinstance(sibling, str):
+                                t = sibling.strip()
+                                if t:
+                                    text_parts.append(t)
+
+                        text = "\n".join(text_parts)
+
+                        # 如果锚点本身有文本（如 <a>文本</a>），也提取
+                        anchor_text = anchor_el.get_text(strip=True)
+                        if anchor_text:
+                            text_parts.insert(0, anchor_text)
+                            text = "\n".join(text_parts)
+                    else:
+                        # 找不到锚点元素，降级：提取整个文档文本
+                        text = soup.get_text(separator="\n", strip=True)
+                        self.logger.warning(
+                            f"找不到锚点元素: id={fragment}，使用全文"
+                        )
+                else:
+                    # 无 fragment：整个文档
+                    text = soup.get_text(separator="\n", strip=True)
+
+                # 跳过非正文条目
+                if self._is_non_body_entry(title):
+                    self.logger.debug(f"跳过非正文条目: {title}")
+                    continue
+
+                if text.strip():
+                    chapters.append({
+                        "index": len(chapters),
+                        "title": title,
+                        "content": text,
+                    })
+
+        # 回退检查
+        if len(chapters) < 2 and len(doc_index) >= 2:
+            self.logger.warning(
+                f"目录拆分仅得到 {len(chapters)} 章，回退到按文件拆分"
+            )
+            return self._extract_by_documents(book)
+
+        return chapters
+
+    def _is_non_body_entry(self, title: str) -> bool:
+        """
+        判断目录项是否为非正文（目录页、前言说明等）
+
+        Args:
+            title: 目录项标题
+
+        Returns:
+            bool: True 表示应跳过
+        """
+        skip_patterns = ["目录", "版权", "出版信息"]
+        for p in skip_patterns:
+            if p in (title or ""):
+                return True
+        return False
+
+    def _extract_content_by_href(
+        self, doc_index: Dict[str, BeautifulSoup], href: str
+    ) -> str:
+        """
+        根据 href 从文档索引中提取内容
+
+        兼容 fragment (#) 定位，支持以下格式：
+        - "chapter1.xhtml"           → 整个文件
+        - "chapter1.xhtml#section1"  → 文件中的某个元素
+        - "../Text/chapter1.xhtml"   → 带相对路径
+
+        Args:
+            doc_index: 文件名 → BeautifulSoup 的映射
+            href: 目标链接
+
+        Returns:
+            str: 提取的文本内容
+        """
+        # 去除 URL 编码和 fragment
+        from urllib.parse import unquote, urlparse
+
+        parsed = urlparse(href)
+        file_part = unquote(parsed.path)
+        fragment = parsed.fragment
+
+        # 提取文件名（去掉路径前缀）
+        file_name = file_part.split("/")[-1] if "/" in file_part else file_part
+
+        # 查找匹配的文档
+        soup = None
+        if file_name in doc_index:
+            soup = doc_index[file_name]
+        else:
+            # 模糊匹配（部分文件名匹配）
+            for key in doc_index:
+                if key.endswith(file_name) or file_name in key:
+                    soup = doc_index[key]
+                    break
+
+        if soup is None:
+            self.logger.warning(f"找不到文档: {file_name}")
+            return ""
+
+        # 如果有 fragment，定位到具体元素
+        if fragment:
+            element = soup.find(id=fragment) or soup.find(attrs={"name": fragment})
+            if element:
+                return element.get_text(separator="\n", strip=True)
+
+        # 返回整个文档内容
+        return soup.get_text(separator="\n", strip=True)
+
+    def _extract_by_documents(self, book: epub.EpubBook) -> List[Dict[str, Any]]:
+        """
+        回退方案：按 HTML 文件逐一拆分章节
 
         Args:
             book: EpubBook 对象
@@ -460,8 +749,6 @@ class EPUBParserService:
             list: 章节列表
         """
         chapters = []
-
-        # 获取所有文档项
         docs = [
             item for item in book.get_items()
             if item.get_type() == ITEM_DOCUMENT
@@ -470,19 +757,14 @@ class EPUBParserService:
         for index, doc in enumerate(docs):
             try:
                 content = doc.get_content()
-                # 优先使用 xml 解析器（适合 XHTML），如果失败则使用 lxml
                 try:
                     soup = BeautifulSoup(content, "xml")
-                    # 检查是否解析成功
                     if soup.find() is None:
                         raise ValueError("XML parser returned empty result")
                 except Exception:
                     soup = BeautifulSoup(content, "lxml")
 
-                # 提取文本
                 text = soup.get_text(separator="\n", strip=True)
-
-                # 提取标题
                 title = self._extract_chapter_title(soup, index)
 
                 if text.strip():
@@ -490,9 +772,7 @@ class EPUBParserService:
                         "index": index,
                         "title": title,
                         "content": text,
-                        "html": content,
                     })
-
             except Exception as e:
                 self.logger.warning(f"解析章节失败: index={index} - {e}")
                 continue

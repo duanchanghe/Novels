@@ -7,7 +7,9 @@
 
 包含所有核心业务逻辑：
 - svc_epub_parser: EPUB 解析引擎
+- svc_chapter_cleaner: 章节正文清洗器
 - svc_text_preprocessor: 文本预处理
+- svc_novel_text_processor: 网络小说文本处理
 - svc_deepseek_analyzer: DeepSeek 分析引擎
 - svc_minimax_tts: MiniMax TTS 合成引擎
 - svc_audio_postprocessor: 音频后处理
@@ -19,6 +21,7 @@
 
 from .svc_minio_storage import MinioStorageService
 from .svc_epub_parser import EPUBParserService
+from .svc_chapter_cleaner import ChapterTextCleaner, clean_chapter_text, clean_chapter_with_report
 from .svc_text_preprocessor import TextPreprocessorService
 from .svc_deepseek_analyzer import DeepSeekAnalyzerService
 from .svc_minimax_tts import MiniMaxTTSService

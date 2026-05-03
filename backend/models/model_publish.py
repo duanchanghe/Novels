@@ -59,20 +59,18 @@ class PublishRecord(Base):
     __tablename__ = "publish_records"
 
     # 主键
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
     # 外键关联
     book_id = Column(
         Integer,
         ForeignKey("books.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     channel_id = Column(
         Integer,
         ForeignKey("publish_channels.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     # 外部平台信息
@@ -85,7 +83,6 @@ class PublishRecord(Base):
         Enum(PublishStatus),
         default=PublishStatus.PENDING,
         nullable=False,
-        index=True,
     )
 
     # 章节发布映射
@@ -109,7 +106,7 @@ class PublishRecord(Base):
     retry_count = Column(Integer, default=0, comment="重试次数")
 
     # Celery 任务ID
-    celery_task_id = Column(String(255), nullable=True, index=True, comment="Celery任务ID")
+    celery_task_id = Column(String(255), nullable=True, comment="Celery任务ID")
 
     # 时间戳
     published_at = Column(DateTime, nullable=True, comment="发布时间")

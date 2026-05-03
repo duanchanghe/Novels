@@ -72,11 +72,11 @@ class Book(Base):
     __tablename__ = "books"
 
     # 主键
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
     # 书籍基本信息
-    title = Column(String(500), nullable=False, index=True, comment="书名")
-    author = Column(String(255), nullable=True, index=True, comment="作者")
+    title = Column(String(500), nullable=False, comment="书名")
+    author = Column(String(255), nullable=True, comment="作者")
     description = Column(Text, nullable=True, comment="书籍简介")
     language = Column(String(50), default="zh-CN", comment="语言")
 
@@ -99,7 +99,7 @@ class Book(Base):
     # 文件信息
     file_name = Column(String(500), nullable=False, comment="原始文件名")
     file_size = Column(BigInteger, nullable=True, comment="文件大小（字节）")
-    file_hash = Column(String(64), nullable=True, index=True, comment="文件MD5哈希")
+    file_hash = Column(String(64), nullable=True, comment="文件MD5哈希")
     file_path = Column(String(1000), nullable=True, comment="MinIO存储路径")
 
     # 处理状态
@@ -107,7 +107,6 @@ class Book(Base):
         Enum(BookStatus),
         default=BookStatus.PENDING,
         nullable=False,
-        index=True,
         comment="处理状态",
     )
     source_type = Column(
@@ -170,10 +169,11 @@ class Book(Base):
         cascade="all, delete-orphan",
     )
 
-    # 索引
+    # 索引：优化常见查询组合
     __table_args__ = (
-        Index("ix_books_status_created", "status", "created_at"),
-        Index("ix_books_source_type_status", "source_type", "status"),
+        Index("ix_books_status_created", "status", "created_at"),           # 按状态+时间排序
+        Index("ix_books_source_type_status", "source_type", "status"),      # 按来源+状态筛选
+        Index("ix_books_deleted_status", "deleted_at", "status"),           # 软删除+状态（最常用查询）
     )
 
     def __repr__(self) -> str:

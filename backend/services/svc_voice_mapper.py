@@ -1,11 +1,12 @@
 # ===========================================
-# 音色映射服务
+# 音色映射服务（使用共享常量）
 # ===========================================
 
 """
 音色映射服务
 
 管理角色到音色的映射关系。
+所有映射表统一来源于 core.constants 模块（唯一数据源）。
 
 功能特性：
 - 角色-音色映射：支持多种角色类型到音色ID的映射
@@ -13,7 +14,16 @@
 - 音频参数生成：根据角色和情感生成完整语音参数
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Any
+from copy import deepcopy
+
+from core.constants import (
+    ROLE_VOICE_MAP,
+    EMOTION_PARAM_MAP,
+    INTENSITY_FACTOR_MAP,
+    DEFAULT_VOICE_CONFIG,
+    DEFAULT_EMOTION_CONFIG,
+)
 
 
 class VoiceMapperService:
@@ -21,149 +31,47 @@ class VoiceMapperService:
     音色映射服务
 
     提供角色到音色的映射功能，支持情感强度细分。
+    映射表源自 core.constants 共享常量，确保全局一致。
     """
 
-    # ===========================================
-    # 角色映射表
-    # ===========================================
-    DEFAULT_ROLE_MAP = {
-        # 旁白/叙述
-        "旁白": {"voice_id": "male-qn", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        "叙述": {"voice_id": "male-qn", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        "描写": {"voice_id": "male-qn", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        # 男性角色
-        "男主": {"voice_id": "male-qn", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        "男性主角": {"voice_id": "male-qn", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        "男": {"voice_id": "male-qn", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        "男性": {"voice_id": "male-qn", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        # 女性角色
-        "女主": {"voice_id": "female-shaon", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        "女性主角": {"voice_id": "female-shaon", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        "女": {"voice_id": "female-shaon", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        "女性": {"voice_id": "female-shaon", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        # 年长角色
-        "老人": {"voice_id": "male-yun", "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-        "老者": {"voice_id": "male-yun", "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-        "老者女性": {"voice_id": "female-don", "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-        "老妇": {"voice_id": "female-don", "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-        # 儿童角色
-        "儿童": {"voice_id": "female-xiang", "speed": 1.1, "pitch": 0.2, "emotion": "happy"},
-        "孩童": {"voice_id": "female-xiang", "speed": 1.1, "pitch": 0.2, "emotion": "happy"},
-        "少年": {"voice_id": "male-qn", "speed": 1.05, "pitch": 0.1, "emotion": "neutral"},
-        "少女": {"voice_id": "female-shaon", "speed": 1.05, "pitch": 0.1, "emotion": "happy"},
-        # 反派角色
-        "反派": {"voice_id": "male-tian", "speed": 0.95, "pitch": 0.1, "emotion": "serious"},
-        "坏人": {"voice_id": "male-tian", "speed": 0.95, "pitch": 0.1, "emotion": "serious"},
-        "boss": {"voice_id": "male-tian", "speed": 0.9, "pitch": 0.15, "emotion": "serious"},
-        # 特殊角色
-        "师父": {"voice_id": "male-yun", "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-        "师傅": {"voice_id": "male-yun", "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-        "师兄": {"voice_id": "male-qn", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-        "师弟": {"voice_id": "male-qn", "speed": 1.05, "pitch": 0.05, "emotion": "neutral"},
-        # 默认
-        "未识别": {"voice_id": "male-qn", "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    }
-
-    # ===========================================
-    # 情感参数映射（支持强度细分）
-    # ===========================================
-    EMOTION_MAP = {
-        # 平静（中性）
-        "平静": {"emotion": "neutral", "pitch": 0, "speed_factor": 1.0},
-        "平静_low": {"emotion": "neutral", "pitch": 0, "speed_factor": 0.95},
-        "平静_medium": {"emotion": "neutral", "pitch": 0, "speed_factor": 1.0},
-        "平静_high": {"emotion": "neutral", "pitch": 0, "speed_factor": 1.05},
-        # 高兴
-        "高兴": {"emotion": "happy", "pitch": 0.15, "speed_factor": 1.05},
-        "高兴_low": {"emotion": "happy", "pitch": 0.1, "speed_factor": 1.05},
-        "高兴_medium": {"emotion": "happy", "pitch": 0.2, "speed_factor": 1.1},
-        "高兴_high": {"emotion": "happy", "pitch": 0.3, "speed_factor": 1.15},
-        "开心": {"emotion": "happy", "pitch": 0.15, "speed_factor": 1.05},
-        "开心_low": {"emotion": "happy", "pitch": 0.1, "speed_factor": 1.05},
-        "开心_medium": {"emotion": "happy", "pitch": 0.2, "speed_factor": 1.1},
-        "开心_high": {"emotion": "happy", "pitch": 0.3, "speed_factor": 1.15},
-        "快乐": {"emotion": "happy", "pitch": 0.15, "speed_factor": 1.05},
-        "喜悦": {"emotion": "happy", "pitch": 0.15, "speed_factor": 1.05},
-        # 悲伤
-        "悲伤": {"emotion": "sad", "pitch": -0.25, "speed_factor": 0.9},
-        "悲伤_low": {"emotion": "sad", "pitch": -0.2, "speed_factor": 0.95},
-        "悲伤_medium": {"emotion": "sad", "pitch": -0.25, "speed_factor": 0.9},
-        "悲伤_high": {"emotion": "sad", "pitch": -0.3, "speed_factor": 0.85},
-        "伤心": {"emotion": "sad", "pitch": -0.25, "speed_factor": 0.9},
-        "难过": {"emotion": "sad", "pitch": -0.2, "speed_factor": 0.95},
-        "痛苦": {"emotion": "sad", "pitch": -0.3, "speed_factor": 0.85},
-        # 愤怒
-        "愤怒": {"emotion": "angry", "pitch": 0.35, "speed_factor": 1.15},
-        "愤怒_low": {"emotion": "angry", "pitch": 0.3, "speed_factor": 1.1},
-        "愤怒_medium": {"emotion": "angry", "pitch": 0.4, "speed_factor": 1.15},
-        "愤怒_high": {"emotion": "angry", "pitch": 0.5, "speed_factor": 1.2},
-        "生气": {"emotion": "angry", "pitch": 0.35, "speed_factor": 1.15},
-        "恼怒": {"emotion": "angry", "pitch": 0.3, "speed_factor": 1.1},
-        "暴怒": {"emotion": "angry", "pitch": 0.5, "speed_factor": 1.2},
-        # 紧张/害怕
-        "紧张": {"emotion": "fearful", "pitch": 0.15, "speed_factor": 1.15},
-        "紧张_low": {"emotion": "fearful", "pitch": 0.1, "speed_factor": 1.1},
-        "紧张_medium": {"emotion": "fearful", "pitch": 0.15, "speed_factor": 1.15},
-        "紧张_high": {"emotion": "fearful", "pitch": 0.2, "speed_factor": 1.2},
-        "害怕": {"emotion": "fearful", "pitch": 0.15, "speed_factor": 1.15},
-        "恐惧": {"emotion": "fearful", "pitch": 0.2, "speed_factor": 1.2},
-        "惊恐": {"emotion": "fearful", "pitch": 0.25, "speed_factor": 1.25},
-        # 惊讶
-        "惊讶": {"emotion": "surprise", "pitch": 0.35, "speed_factor": 1.15},
-        "震惊": {"emotion": "surprise", "pitch": 0.4, "speed_factor": 1.2},
-        "诧异": {"emotion": "surprise", "pitch": 0.3, "speed_factor": 1.15},
-        "惊愕": {"emotion": "surprise", "pitch": 0.4, "speed_factor": 1.2},
-        # 温柔
-        "温柔": {"emotion": "gentle", "pitch": -0.1, "speed_factor": 0.9},
-        "柔和": {"emotion": "gentle", "pitch": -0.1, "speed_factor": 0.9},
-        "轻柔": {"emotion": "gentle", "pitch": -0.15, "speed_factor": 0.85},
-        "温情": {"emotion": "gentle", "pitch": -0.1, "speed_factor": 0.9},
-        # 严肃
-        "严肃": {"emotion": "serious", "pitch": -0.1, "speed_factor": 0.9},
-        "正经": {"emotion": "serious", "pitch": -0.1, "speed_factor": 0.9},
-        "郑重": {"emotion": "serious", "pitch": -0.15, "speed_factor": 0.85},
-        # 默认
-        "neutral": {"emotion": "neutral", "pitch": 0, "speed_factor": 1.0},
-    }
-
     def __init__(self):
-        self.role_map = self.DEFAULT_ROLE_MAP.copy()
-        self.emotion_map = self.EMOTION_MAP.copy()
+        # 使用深拷贝，允许实例级别自定义而不影响全局常量
+        self.role_map = deepcopy(ROLE_VOICE_MAP)
+        self.emotion_map = deepcopy(EMOTION_PARAM_MAP)
 
     def get_voice_for_role(self, role: str) -> Dict[str, Any]:
         """
-        获取角色对应的音色
+        获取角色对应的音色配置
 
         Args:
-            role: 角色名
+            role: 角色名（中文或英文 key）
 
         Returns:
-            dict: 音色配置
+            dict: 包含 voice_id/speed/pitch/emotion 的配置
         """
-        return self.role_map.get(role, self.role_map["未识别"])
+        return self.role_map.get(role, DEFAULT_VOICE_CONFIG)
 
     def get_emotion_params(self, emotion: str) -> Dict[str, Any]:
         """
         获取情感参数（支持强度细分）
 
         Args:
-            emotion: 情感标签（如"悲伤_high"、"高兴_medium"）
+            emotion: 情感标签（如 "悲伤_high"、"高兴_medium" 或纯 "悲伤"）
 
         Returns:
-            dict: 情感参数
+            dict: 包含 emotion/pitch/speed_factor 的配置
         """
         # 精确匹配
         if emotion in self.emotion_map:
             return self.emotion_map[emotion]
 
-        # 尝试基础情感匹配
+        # 回退：基于基础情感名称模糊匹配
         base_emotion = emotion.split("_")[0] if "_" in emotion else emotion
         for key, config in self.emotion_map.items():
             if key.startswith(base_emotion):
                 return config
 
-        # 默认返回平静
-        return self.emotion_map["平静"]
+        return DEFAULT_EMOTION_CONFIG
 
     def map_analysis_to_voice_params(
         self,
@@ -172,15 +80,15 @@ class VoiceMapperService:
         intensity: str = "medium",
     ) -> Dict[str, Any]:
         """
-        将分析结果映射为语音参数
+        将 DeepSeek 分析结果映射为 MiniMax TTS 语音参数
 
         Args:
             role: 角色名
-            emotion: 情感
-            intensity: 情感强度
+            emotion: 情感标签
+            intensity: 情感强度（"low" / "medium" / "high"）
 
         Returns:
-            dict: 完整的语音参数
+            dict: {voice_id, speed, pitch, emotion}
         """
         voice_config = self.get_voice_for_role(role)
 
@@ -189,14 +97,9 @@ class VoiceMapperService:
             emotion_key = f"{emotion}_{intensity}" if intensity != "medium" else emotion
             emotion_config = self.get_emotion_params(emotion_key)
         else:
-            emotion_config = self.get_emotion_params("平静")
+            emotion_config = DEFAULT_EMOTION_CONFIG
 
-        # 强度因子
-        intensity_factor = {
-            "low": 0.8,
-            "medium": 1.0,
-            "high": 1.2,
-        }.get(intensity, 1.0)
+        intensity_factor = INTENSITY_FACTOR_MAP.get(intensity, 1.0)
 
         return {
             "voice_id": voice_config["voice_id"],

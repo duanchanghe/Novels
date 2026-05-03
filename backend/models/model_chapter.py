@@ -60,14 +60,13 @@ class Chapter(Base):
     __tablename__ = "chapters"
 
     # 主键
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
     # 外键关联
     book_id = Column(
         Integer,
         ForeignKey("books.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
 
     # 章节基本信息
@@ -89,7 +88,7 @@ class Chapter(Base):
         Enum(ChapterStatus),
         default=ChapterStatus.PENDING,
         nullable=False,
-        index=True,
+        comment="处理状态",
     )
 
     # 音频文件信息
@@ -130,9 +129,11 @@ class Chapter(Base):
         order_by="AudioSegment.segment_index",
     )
 
-    # 索引
+    # 索引：优化章节查询
     __table_args__ = (
-        Index("ix_chapters_book_index", "book_id", "chapter_index", unique=True),
+        Index("ix_chapters_book_index", "book_id", "chapter_index", unique=True),  # 章节排序+唯一约束
+        Index("ix_chapters_book_status", "book_id", "status"),                      # 按书籍+状态筛选
+        Index("ix_chapters_status", "status"),                                       # 全局状态筛选
     )
 
     def __repr__(self) -> str:

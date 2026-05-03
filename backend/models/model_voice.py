@@ -64,14 +64,13 @@ class VoiceProfile(Base):
     __tablename__ = "voice_profiles"
 
     # 主键
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
     # 关联书籍（可选，系统预设的音色不关联书籍）
     book_id = Column(
         Integer,
         ForeignKey("books.id", ondelete="CASCADE"),
         nullable=True,
-        index=True,
     )
 
     # 音色名称

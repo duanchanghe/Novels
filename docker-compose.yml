@@ -60,7 +60,7 @@ services:
       dockerfile: backend/Dockerfile
     container_name: audiobook-celery-worker
     working_dir: /app
-    command: sh -c "export PYTHONPATH=/app && celery -A tasks.celery_app worker --loglevel=info --concurrency=4 -Q celery,analyze,pipeline,watch"
+    command: sh -c "export PYTHONPATH=/app && celery -A tasks.celery_app worker --loglevel=info --concurrency=1 -Q celery,analyze,pipeline,watch"
     environment:
       - PYTHONPATH=/app
       - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}

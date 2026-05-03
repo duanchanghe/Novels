@@ -56,7 +56,7 @@ class PublishChannel(Base):
     __tablename__ = "publish_channels"
 
     # 主键
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
     # 渠道名称
     name = Column(String(100), nullable=False, comment="渠道名称")

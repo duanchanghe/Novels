@@ -63,7 +63,7 @@ class TTSTask(Base):
     __tablename__ = "tts_tasks"
 
     # 主键
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
 
     # 外键关联
     book_id = Column(
@@ -71,11 +71,10 @@ class TTSTask(Base):
         ForeignKey("books.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
-        index=True,
     )
 
     # Celery 任务ID
-    celery_task_id = Column(String(255), nullable=True, index=True, comment="Celery任务ID")
+    celery_task_id = Column(String(255), nullable=True, comment="Celery任务ID")
     parent_task_id = Column(String(255), nullable=True, comment="父任务ID")
 
     # 任务类型
@@ -86,7 +85,6 @@ class TTSTask(Base):
         Enum(TaskStatus),
         default=TaskStatus.PENDING,
         nullable=False,
-        index=True,
     )
 
     # 进度统计

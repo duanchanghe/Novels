@@ -330,3 +330,79 @@ async def download_audiobook(
         }
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"文件不存在或尚未生成: {str(e)}")
+
+
+@router.post("/{book_id}/retry")
+async def retry_failed_chapters(
+    book_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    重试所有失败的章节
+
+    将 FAILED 状态的章节重置为 PENDING，
+    并重新触发 process_chapter。
+    """
+    from models.model_chapter import ChapterStatus
+    from tasks.task_pipeline import process_chapter
+
+    book = db.query(Book).filter(Book.id == book_id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+
+    failed_chapters = (
+        db.query(Chapter)
+        .filter(Chapter.book_id == book_id)
+        .filter(Chapter.status == ChapterStatus.FAILED)
+        .all()
+    )
+    if not failed_chapters:
+        raise HTTPException(status_code=400, detail="没有失败的章节")
+
+    retried = []
+    for ch in failed_chapters:
+        ch.status = ChapterStatus.PENDING
+        ch.error_message = None
+        ch.failed_segments = 0
+        db.commit()
+        process_chapter.delay(ch.id)
+        retried.append({"chapter_id": ch.id, "title": ch.title, "index": ch.chapter_index})
+
+    book.status = BookStatus.PENDING
+    return {"book_id": book_id, "retried_count": len(retried), "chapters": retried}
+
+
+@router.post("/{book_id}/chapters/{chapter_id}/retry")
+async def retry_single_chapter(
+    book_id: int,
+    chapter_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    重试单个失败的章节
+    """
+    from models.model_chapter import ChapterStatus
+    from tasks.task_pipeline import process_chapter
+
+    book = db.query(Book).filter(Book.id == book_id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+
+    chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    if chapter.status != ChapterStatus.FAILED:
+        raise HTTPException(status_code=400, detail="章节不是 FAILED 状态，无需重试")
+
+    from models import AudioSegment
+    db.query(AudioSegment).filter(AudioSegment.chapter_id == chapter.id).delete()
+    chapter.status = ChapterStatus.PENDING
+    chapter.error_message = None
+    chapter.failed_segments = 0
+    chapter.total_segments = 0
+    chapter.completed_segments = 0
+    db.commit()
+
+    process_chapter.delay(chapter.id)
+    return {"book_id": book_id, "chapter_id": chapter_id, "title": chapter.title, "status": "retrying"}

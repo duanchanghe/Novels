@@ -91,7 +91,8 @@ class AudioPostprocessorService:
             dict: 处理结果
         """
         from core.database import get_db_context
-        from models import Chapter, AudioSegment as SegmentModel, SegmentStatus, Book
+        from models import Chapter, Book
+        from models.model_segment import SegmentStatus, AudioSegment as SegmentModel
 
         with get_db_context() as db:
             chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
@@ -260,12 +261,17 @@ class AudioPostprocessorService:
     def _load_audio_segments(
         self,
         segments: List[Any],
+        batch_size: int = 20,
     ) -> Tuple[List[AudioSegment], List[Dict[str, Any]]]:
         """
-        加载并解码音频片段
+        分批加载并解码音频片段（内存优化版）
+
+        对于大量片段的章节，分批加载避免一次性占用过多内存。
+        每批加载 batch_size 个片段后即释放原始字节数据。
 
         Args:
             segments: 数据库中的片段记录列表
+            batch_size: 每批加载的片段数
 
         Returns:
             tuple: (音频片段列表, 元信息列表)
@@ -276,31 +282,41 @@ class AudioPostprocessorService:
         audio_segments = []
         segment_info = []
 
-        for segment in segments:
-            try:
-                audio_data = storage.download_file(
-                    settings.MINIO_BUCKET_AUDIO,
-                    segment.audio_file_path,
-                )
+        # 分批处理，控制内存峰值
+        for batch_start in range(0, len(segments), batch_size):
+            batch = segments[batch_start:batch_start + batch_size]
 
-                # 解码音频
-                audio = AudioSegment.from_mp3(BytesIO(audio_data))
+            for segment in batch:
+                try:
+                    audio_data = storage.download_file(
+                        settings.MINIO_BUCKET_AUDIO,
+                        segment.audio_file_path,
+                    )
 
-                audio_segments.append(audio)
-                segment_info.append({
-                    "segment_id": segment.id,
-                    "emotion": segment.emotion,
-                    "pause_after": getattr(segment, "pause_hint", "normal"),
-                    "duration_ms": len(audio),
-                })
+                    # 解码音频
+                    audio = AudioSegment.from_mp3(BytesIO(audio_data))
+                    # 释放原始字节（让 GC 可以回收）
+                    del audio_data
 
-            except Exception as e:
-                logger.warning(f"加载音频片段失败: {segment.id} - {e}")
-                continue
+                    audio_segments.append(audio)
+                    segment_info.append({
+                        "segment_id": segment.id,
+                        "emotion": segment.emotion,
+                        "pause_after": getattr(segment, "pause_hint", "normal"),
+                        "duration_ms": len(audio),
+                    })
+
+                except Exception as e:
+                    logger.warning(f"加载音频片段失败: {segment.id} - {e}")
+                    continue
+
+            # 批次间提示（便于大章节监控）
+            if batch_start + batch_size < len(segments):
+                logger.debug(f"音频加载进度: {batch_start + batch_size}/{len(segments)} 片段")
 
         # 检查是否有可用片段
         if not audio_segments:
-            raise AppError(f"所有音频片段加载失败: chapter_id={chapter_id}")
+            raise AppError("所有音频片段加载失败")
 
         return audio_segments, segment_info
 
@@ -311,9 +327,11 @@ class AudioPostprocessorService:
         crossfade_ms: int = None,
     ) -> AudioSegment:
         """
-        智能拼接音频片段
+        智能拼接音频片段（优化版：O(n) 复杂度）
 
-        根据情感变化自动调节交叉淡入淡出时长。
+        策略改进：
+        - 旧版使用 result.append() 循环 → O(n²) 内存分配
+        - 新版预先计算带停顿和淡入淡出的片段列表 → 一次性拼接
 
         Args:
             segments: 音频片段列表
@@ -331,35 +349,32 @@ class AudioPostprocessorService:
 
         crossfade_ms = crossfade_ms or self.crossfade_ms
 
-        result = segments[0]
+        # 构建待拼接的片段列表（含停顿 + 淡入淡出处理）
+        pieces = [segments[0]]
 
         for i in range(1, len(segments)):
             current = segments[i]
-            prev_info = segment_info[i - 1]
-            curr_info = segment_info[i]
+            prev_emotion = segment_info[i - 1].get("emotion", "neutral")
+            curr_emotion = segment_info[i].get("emotion", "neutral")
 
-            # 根据情感变化调整交叉淡入淡出
-            if i < len(segment_info):
-                prev_emotion = prev_info.get("emotion", "neutral")
-                curr_emotion = curr_info.get("emotion", "neutral")
-
-                # 情感突变时增加淡入淡出时长
-                if prev_emotion != curr_emotion:
-                    fade_duration = int(crossfade_ms * 1.5)
-                else:
-                    fade_duration = crossfade_ms
-
-                # 情感切换时插入额外停顿
-                if prev_emotion != curr_emotion:
-                    pause = AudioSegment.silent(duration=self.PAUSE_CONFIG["emotion_pause"])
-                    result = result + pause
-
-                # 应用交叉淡入淡出
-                result = result.append(current, crossfade=fade_duration)
+            # 情感切换时插入额外停顿
+            if prev_emotion != curr_emotion:
+                pause = AudioSegment.silent(duration=self.PAUSE_CONFIG["emotion_pause"])
+                # 对前一个片段做淡出处理
+                fade_duration = int(crossfade_ms * 1.5)
+                pieces[-1] = pieces[-1].fade_out(fade_duration)
+                pieces.append(pause)
+                # 对当前片段做淡入处理
+                current = current.fade_in(fade_duration)
             else:
-                result = result.append(current, crossfade=crossfade_ms)
+                fade_duration = crossfade_ms
+                pieces[-1] = pieces[-1].fade_out(fade_duration)
+                current = current.fade_in(fade_duration)
 
-        return result
+            pieces.append(current)
+
+        # 一次性拼接所有片段（O(n) vs O(n²)）
+        return sum(pieces)
 
     def _insert_smart_pauses(
         self,

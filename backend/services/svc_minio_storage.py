@@ -33,7 +33,11 @@ class MinioStorageService:
     - 文件上传/下载
     - 预签名 URL 生成
     - 大文件分片上传
+    - 章节文本存取（供 DeepSeek 分析使用）
     """
+
+    # 章节文本存储路径前缀
+    CHAPTER_TEXT_PREFIX = "chapters"
 
     def __init__(self):
         """
@@ -341,6 +345,111 @@ class MinioStorageService:
         except S3Error as e:
             logger.error(f"对象复制失败: {bucket}/{source_name} -> {dest_name} - {e}")
             return False
+
+
+    # ── 章节文本存取（供 DeepSeek 分析从 MinIO 读取） ──
+
+    def upload_chapter_text(
+        self,
+        book_id: int,
+        chapter_index: int,
+        text: str,
+        encoding: str = "utf-8",
+    ) -> str:
+        """
+        上传清洗后的章节文本到 MinIO
+
+        路径格式: chapters/{book_id}/{chapter_index:03d}_cleaned.txt
+
+        Args:
+            book_id: 书籍 ID
+            chapter_index: 章节序号
+            text: 清洗后的纯正文
+            encoding: 文本编码
+
+        Returns:
+            str: MinIO 对象路径
+        """
+        object_name = f"{self.CHAPTER_TEXT_PREFIX}/{book_id}/{chapter_index:03d}_cleaned.txt"
+        data = text.encode(encoding)
+
+        self.upload_file(
+            bucket=settings.MINIO_BUCKET_EPUB,
+            object_name=object_name,
+            data=data,
+            content_type="text/plain; charset=utf-8",
+        )
+
+        logger.debug(f"章节文本已上传: {object_name} ({len(data)} bytes)")
+        return object_name
+
+    def download_chapter_text(
+        self,
+        book_id: int,
+        chapter_index: int,
+    ) -> str:
+        """
+        从 MinIO 下载清洗后的章节文本
+
+        Args:
+            book_id: 书籍 ID
+            chapter_index: 章节序号
+
+        Returns:
+            str: 章节纯正文（UTF-8 解码）
+
+        Raises:
+            StorageError: 文件不存在或下载失败
+        """
+        object_name = f"{self.CHAPTER_TEXT_PREFIX}/{book_id}/{chapter_index:03d}_cleaned.txt"
+
+        try:
+            data = self.download_file(
+                bucket=settings.MINIO_BUCKET_EPUB,
+                object_name=object_name,
+            )
+            return data.decode("utf-8")
+        except StorageError:
+            # 尝试兼容旧路径（无 _cleaned 后缀）
+            alt_name = f"{self.CHAPTER_TEXT_PREFIX}/{book_id}/{chapter_index:03d}.txt"
+            try:
+                data = self.download_file(
+                    bucket=settings.MINIO_BUCKET_EPUB,
+                    object_name=alt_name,
+                )
+                return data.decode("utf-8")
+            except StorageError:
+                raise StorageError(f"章节文本不存在: book={book_id}, chapter={chapter_index}")
+
+    def get_chapter_text_path(self, book_id: int, chapter_index: int) -> str:
+        """获取章节文本在 MinIO 中的标准路径"""
+        return f"{self.CHAPTER_TEXT_PREFIX}/{book_id}/{chapter_index:03d}_cleaned.txt"
+
+    def delete_chapter_texts(self, book_id: int) -> int:
+        """
+        删除某本书的所有章节文本
+
+        Args:
+            book_id: 书籍 ID
+
+        Returns:
+            int: 删除的文件数
+        """
+        prefix = f"{self.CHAPTER_TEXT_PREFIX}/{book_id}/"
+        try:
+            objects = self.list_objects(
+                bucket=settings.MINIO_BUCKET_EPUB,
+                prefix=prefix,
+            )
+            count = 0
+            for obj in objects:
+                self.delete_file(settings.MINIO_BUCKET_EPUB, obj["name"])
+                count += 1
+            logger.info(f"已删除 {count} 个章节文本: book={book_id}")
+            return count
+        except Exception as e:
+            logger.warning(f"删除章节文本失败: book={book_id} - {e}")
+            return 0
 
 
 # 全局单例
