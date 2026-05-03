@@ -15,8 +15,8 @@ RUN npm install
 # Copy source code
 COPY frontend/ ./
 
-# Build Next.js application
-RUN npm run build
+# Build Next.js application (skip lint for faster builds)
+RUN npm run build -- --no-lint
 
 # Production stage
 FROM node:20-alpine
