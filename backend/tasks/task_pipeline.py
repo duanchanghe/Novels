@@ -13,6 +13,7 @@
 
 import logging
 import hashlib
+import os
 from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime
 from dataclasses import dataclass, field
@@ -1085,18 +1086,16 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
                 logger.info(f"[Chapter {chapter_id}] ✅ 章节全部处理完成")
                 return {"chapter_id": chapter_id, "success": True}
 
-            if book and book.generation_mode == GenerationMode.MANUAL:
+            # 将 generation_mode 转换为字符串进行安全比较
+            # model_book.py 中 generation_mode 是 String(20) 类型
+            generation_mode = getattr(book, 'generation_mode', None)
+            is_manual = generation_mode == GenerationMode.MANUAL.value or generation_mode == GenerationMode.MANUAL
+
+            if book and is_manual:
                 # ── 手动模式：暂停，等待用户确认 ──
                 chapter.status = ChapterStatus.DONE
-                # 找出下下章
-                next_next = (
-                    db.query(Chapter)
-                    .filter(Chapter.book_id == chapter.book_id)
-                    .filter(Chapter.chapter_index == next_chapter.chapter_index + 1)
-                    .first()
-                )
+                # 将下一章标记为等待确认
                 next_chapter.status = ChapterStatus.AWAITING_CONFIRM
-                next_chapter.next_chapter_id = next_next.id if next_next else None
                 db.commit()
                 logger.info(
                     f"[Chapter {chapter_id}] ⏸ 手动模式：第 {chapter.chapter_index} 章完成，"
@@ -1362,18 +1361,6 @@ def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
                 book.error_message = str(e)
                 db.commit()
         raise
-        logger.info(f"=" * 60)
-        logger.info(f"[Book {book_id}] 有声书生成流水线完成!")
-        logger.info(f"[Book {book_id}] 总耗时: {total_time:.1f}s")
-        logger.info(f"=" * 60)
-
-        return {
-            "book_id": book_id,
-            "chapter_count": len(chapter_ids),
-            "segment_count": len(segment_ids),
-            "total_time_seconds": int(total_time),
-            "status": "completed",
-        }
 
     except Exception as e:
         total_time = time.time() - total_start

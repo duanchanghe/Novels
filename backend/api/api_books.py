@@ -235,7 +235,7 @@ async def confirm_chapter(
 
     Args:
         book_id: 书籍ID
-        chapter_id: 当前章节ID（需为 AWAITING_CONFIRM 状态）
+        chapter_id: 待确认的章节ID（需为 AWAITING_CONFIRM 状态）
         db: 数据库会话
 
     Returns:
@@ -247,6 +247,7 @@ async def confirm_chapter(
     if not book:
         raise HTTPException(status_code=404, detail="书籍不存在")
 
+    # 获取待确认的章节（应该是 AWAITING_CONFIRM 状态）
     chapter = db.query(Chapter).filter(
         Chapter.id == chapter_id,
         Chapter.book_id == book_id,
@@ -260,16 +261,19 @@ async def confirm_chapter(
             detail=f"章节状态为 {chapter.status.value}，无需确认"
         )
 
-    # 触发下一章处理
+    # 重置章节状态为 PENDING
     chapter.status = ChapterStatus.PENDING
     db.commit()
-    process_chapter.delay(chapter_id)
+
+    # 直接触发该章节的处理流程
+    process_chapter.delay(chapter.id)
 
     return {
         "book_id": book_id,
         "chapter_id": chapter_id,
         "chapter_title": chapter.title,
-        "status": "pending",
+        "chapter_index": chapter.chapter_index,
+        "status": "processing",
         "message": f"第 {chapter.chapter_index} 章已开始处理",
     }
 
@@ -440,11 +444,18 @@ async def retry_failed_chapters(
         ch.status = ChapterStatus.PENDING
         ch.error_message = None
         ch.failed_segments = 0
-        db.commit()
-        process_chapter.delay(ch.id)
         retried.append({"chapter_id": ch.id, "title": ch.title, "index": ch.chapter_index})
 
+    # 统一提交所有更新
+    db.commit()
+
+    # 提交后触发处理任务
+    for ch in failed_chapters:
+        process_chapter.delay(ch.id)
+
     book.status = BookStatus.PENDING
+    db.commit()
+
     return {"book_id": book_id, "retried_count": len(retried), "chapters": retried}
 
 
