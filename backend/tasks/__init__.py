@@ -13,7 +13,7 @@ Celery 异步任务模块
 - task_watch: 文件夹监听兜底任务
 """
 
-from .celery_app import celery_app
+from config import celery_app
 from .task_analyze import *
 from .task_synthesize import *
 from .task_postprocess import *

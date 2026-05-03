@@ -5,129 +5,171 @@
 """
 应用配置模块
 
-从环境变量加载所有配置，实现 12-Factor App 原则。
-使用 Pydantic Settings 进行配置管理。
+从环境变量加载所有配置，实现 12-FACTOR APP 原则。
+
+注意：对于 Django 应用，推荐直接使用 django.conf.settings。
+此模块主要用于 Celery 任务和非 Django 代码。
 """
 
 import os
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+# 尝试从 Django settings 导入，如果失败则使用本地配置
+try:
+    from django.conf import settings as django_settings
+    _USE_DJANGO = True
+except ImportError:
+    _USE_DJANGO = False
 
 
-class Settings(BaseSettings):
+class Settings:
     """
     应用配置类
 
     所有配置项均从环境变量读取，支持 .env 文件自动加载。
+    如果 Django 已初始化，则从 Django settings 读取。
     """
 
-    model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        case_sensitive=False,
-        extra="ignore",
-    )
+    def __init__(self):
+        if _USE_DJANGO:
+            self._load_from_django()
+        else:
+            self._load_from_env()
 
-    # ---------- 应用基础配置 ----------
-    APP_NAME: str = "ai-audiobook-workshop"
-    APP_ENV: str = "development"
-    APP_DEBUG: bool = True
-    APP_HOST: str = "0.0.0.0"
-    APP_PORT: int = 8000
-    SECRET_KEY: str = "change-me-in-production"
+    def _load_from_django(self):
+        """从 Django settings 加载配置"""
+        # 基础配置
+        self.APP_NAME = getattr(django_settings, 'APP_NAME', 'AI 有声书工坊')
+        self.APP_ENV = os.getenv('APP_ENV', 'development')
+        self.APP_DEBUG = getattr(django_settings, 'DEBUG', True)
+        self.APP_HOST = getattr(django_settings, 'APP_HOST', '0.0.0.0')
+        self.APP_PORT = getattr(django_settings, 'APP_PORT', 8000)
+        self.SECRET_KEY = getattr(django_settings, 'SECRET_KEY', 'change-me')
 
-    # ---------- 数据库配置 ----------
-    DB_HOST: str = "postgres"
-    DB_PORT: int = 5432
-    DB_NAME: str = "audiobook_db"
-    DB_USER: str = "audiobook_user"
-    DB_PASSWORD: str = "your-db-password"
-    DATABASE_URL: str = ""
+        # 数据库配置
+        db = getattr(django_settings, 'DATABASES', {}).get('default', {})
+        self.DB_HOST = os.getenv('DB_HOST', db.get('HOST', 'localhost'))
+        self.DB_PORT = int(os.getenv('DB_PORT', db.get('PORT', 5432)))
+        self.DB_NAME = os.getenv('DB_NAME', db.get('NAME', 'audiobook_db'))
+        self.DB_USER = os.getenv('DB_USER', db.get('USER', 'audiobook_user'))
+        self.DB_PASSWORD = os.getenv('DB_PASSWORD', db.get('PASSWORD', ''))
 
-    # ---------- Redis 配置 ----------
-    REDIS_HOST: str = "redis"
-    REDIS_PORT: int = 6379
-    REDIS_DB: int = 0
-    REDIS_PASSWORD: str = ""
-    REDIS_URL: str = ""
+        # Redis 配置
+        self.REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+        self.REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+        self.REDIS_DB = int(os.getenv('REDIS_DB', 0))
+        self.REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', '')
+        self.REDIS_URL = os.getenv('REDIS_URL', '')
 
-    # ---------- MinIO 对象存储配置 ----------
-    MINIO_ENDPOINT: str = "minio:9000"
-    MINIO_ACCESS_KEY: str = "minioadmin"
-    MINIO_SECRET_KEY: str = "minioadmin"
-    MINIO_SECURE: bool = False
-    MINIO_BUCKET_EPUB: str = "books-epub"
-    MINIO_BUCKET_AUDIO: str = "books-audio"
+        # MinIO 配置
+        self.MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'localhost:9000')
+        self.MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
+        self.MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'minioadmin')
+        self.MINIO_SECURE = os.getenv('MINIO_SECURE', 'false').lower() in ('true', '1', 'yes')
+        self.MINIO_BUCKET_EPUB = os.getenv('MINIO_BUCKET_EPUB', 'books-epub')
+        self.MINIO_BUCKET_AUDIO = os.getenv('MINIO_BUCKET_AUDIO', 'books-audio')
 
-    # ---------- DeepSeek API 配置 ----------
-    DEEPSEEK_API_KEY: str = ""
-    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
-    DEEPSEEK_MODEL: str = "deepseek-chat"
-    DEEPSEEK_MAX_TOKENS: int = 8192
-    DEEPSEEK_TEMPERATURE: float = 0.7
+        # DeepSeek API 配置
+        self.DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
+        self.DEEPSEEK_BASE_URL = os.getenv('DEEEPSEEK_BASE_URL', 'https://api.deepseek.com')
+        self.DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+        self.DEEPSEEK_MAX_TOKENS = int(os.getenv('DEEPSEEK_MAX_TOKENS', 8192))
+        self.DEEPSEEK_TEMPERATURE = float(os.getenv('DEEPSEEK_TEMPERATURE', 0.7))
 
-    # ---------- MiniMax TTS API 配置 ----------
-    MINIMAX_API_KEY: str = ""
-    MINIMAX_API_HOST: str = "https://api.minimax.chat"
-    MINIMAX_GROUP_ID: str = ""
+        # MiniMax TTS API 配置
+        self.MINIMAX_API_KEY = os.getenv('MINIMAX_API_KEY', '')
+        self.MINIMAX_API_HOST = os.getenv('MINIMAX_API_HOST', 'https://api.minimax.chat')
+        self.MINIMAX_GROUP_ID = os.getenv('MINIMAX_GROUP_ID', '')
 
-    # ---------- Celery 配置 ----------
-    CELERY_BROKER_URL: str = ""
-    CELERY_RESULT_BACKEND: str = ""
+        # 文件夹监听配置
+        self.WATCH_DIR = os.getenv('WATCH_DIR', '/books/incoming')
+        self.WATCH_DIRS = os.getenv('WATCH_DIRS', '')
+        self.WATCH_INTERVAL = int(os.getenv('WATCH_INTERVAL', 60))
+        self.WATCH_ENABLED = os.getenv('WATCH_ENABLED', 'true').lower() in ('true', '1', 'yes')
+
+        # 音频处理配置
+        self.AUDIO_SAMPLE_RATE = int(os.getenv('AUDIO_SAMPLE_RATE', 44100))
+        self.AUDIO_BITRATE = int(os.getenv('AUDIO_BITRATE', 192))
+
+        # 日志配置
+        self.LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+
+        # CORS 配置
+        self.CORS_ORIGINS = getattr(django_settings, 'CORS_ALLOWED_ORIGINS', [
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+        ])
+
+    def _load_from_env(self):
+        """从环境变量加载配置"""
+        # 基础配置
+        self.APP_NAME = os.getenv('APP_NAME', 'AI 有声书工坊')
+        self.APP_ENV = os.getenv('APP_ENV', 'development')
+        self.APP_DEBUG = os.getenv('APP_DEBUG', 'true').lower() in ('true', '1', 'yes')
+        self.APP_HOST = os.getenv('APP_HOST', '0.0.0.0')
+        self.APP_PORT = int(os.getenv('APP_PORT', '8000'))
+        self.SECRET_KEY = os.getenv('SECRET_KEY', 'change-me')
+
+        # 数据库配置
+        self.DB_HOST = os.getenv('DB_HOST', 'localhost')
+        self.DB_PORT = int(os.getenv('DB_PORT', '5432'))
+        self.DB_NAME = os.getenv('DB_NAME', 'audiobook_db')
+        self.DB_USER = os.getenv('DB_USER', 'audiobook_user')
+        self.DB_PASSWORD = os.getenv('DB_PASSWORD', '')
+
+        # Redis 配置
+        self.REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+        self.REDIS_PORT = int(os.getenv('REDIS_PORT', '6379'))
+        self.REDIS_DB = int(os.getenv('REDIS_DB', '0'))
+        self.REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', '')
+        self.REDIS_URL = os.getenv('REDIS_URL', '')
+
+        # MinIO 配置
+        self.MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT', 'localhost:9000')
+        self.MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
+        self.MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY', 'minioadmin')
+        self.MINIO_SECURE = os.getenv('MINIO_SECURE', 'false').lower() in ('true', '1', 'yes')
+        self.MINIO_BUCKET_EPUB = os.getenv('MINIO_BUCKET_EPUB', 'books-epub')
+        self.MINIO_BUCKET_AUDIO = os.getenv('MINIO_BUCKET_AUDIO', 'books-audio')
+
+        # DeepSeek API 配置
+        self.DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
+        self.DEEPSEEK_BASE_URL = os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')
+        self.DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+        self.DEEPSEEK_MAX_TOKENS = int(os.getenv('DEEPSEEK_MAX_TOKENS', '8192'))
+        self.DEEPSEEK_TEMPERATURE = float(os.getenv('DEEPSEEK_TEMPERATURE', '0.7'))
+
+        # MiniMax TTS API 配置
+        self.MINIMAX_API_KEY = os.getenv('MINIMAX_API_KEY', '')
+        self.MINIMAX_API_HOST = os.getenv('MINIMAX_API_HOST', 'https://api.minimax.chat')
+        self.MINIMAX_GROUP_ID = os.getenv('MINIMAX_GROUP_ID', '')
+
+        # 文件夹监听配置
+        self.WATCH_DIR = os.getenv('WATCH_DIR', '/books/incoming')
+        self.WATCH_DIRS = os.getenv('WATCH_DIRS', '')
+        self.WATCH_INTERVAL = int(os.getenv('WATCH_INTERVAL', '60'))
+        self.WATCH_ENABLED = os.getenv('WATCH_ENABLED', 'true').lower() in ('true', '1', 'yes')
+
+        # 音频处理配置
+        self.AUDIO_SAMPLE_RATE = int(os.getenv('AUDIO_SAMPLE_RATE', '44100'))
+        self.AUDIO_BITRATE = int(os.getenv('AUDIO_BITRATE', '192'))
+
+        # 日志配置
+        self.LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
+
+        # CORS 配置
+        self.CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
 
     @property
     def _redis_url(self) -> str:
         """构建 Redis 连接 URL"""
         if self.REDIS_PASSWORD:
             return f"redis://:{self.REDIS_PASSWORD}@{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
+        if self.REDIS_URL:
+            return self.REDIS_URL
         return f"redis://{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
 
-    # ---------- 文件夹监听配置 ----------
-    WATCH_DIR: str = "/books/incoming"
-    WATCH_DIRS: str = ""  # 逗号分隔的多个监听目录，如 "/books/incoming,/books/import"
-    WATCH_INTERVAL: int = 60
-    WATCH_ENABLED: bool = True
-    WATCH_MAX_FILE_SIZE_MB: int = 500
-    WATCH_CONCURRENT: int = 3
-    WATCH_STATUS_INTERVAL: int = 300  # 状态报告间隔（秒）
-    WATCH_DEAD_LETTER_DIR: str = "/books/dead-letter"  # 失败文件目录
-
-    # ---------- 音频处理配置 ----------
-    AUDIO_SAMPLE_RATE: int = 44100
-    AUDIO_BITRATE: int = 192
-    AUDIO_CROSSFADE_MS: int = 20
-    AUDIO_BATCH_SIZE: int = 20          # 音频片段批处理大小（控制内存峰值）
-    AUDIO_HIGH_QUALITY_BITRATE: str = "320k"
-
-    # ---------- 缓存配置 ----------
-    CACHE_TTL_SHORT: int = 30           # 短期缓存（秒）：列表查询等
-    CACHE_TTL_MEDIUM: int = 300         # 中期缓存（秒）：音色列表等
-    CACHE_TTL_LONG: int = 3600          # 长期缓存（秒）：章节详情等
-    DEEPSEEK_CACHE_TTL: int = 86400     # DeepSeek 分析缓存 TTL（秒，默认 24h）
-    DEEPSEEK_CACHE_MAX_SIZE: int = 5000 # DeepSeek 分析缓存最大条目
-
-    # ---------- 限流配置 ----------
-    TTS_RATE_LIMIT_QPS: float = 10.0    # TTS API 每秒最大请求数
-    DEEPSEEK_RATE_LIMIT_QPS: float = 5.0 # DeepSeek API 每秒最大请求数
-    RATE_LIMITER_BACKEND: str = "redis" # 限流器后端（"redis" | "local"）
-
-    # ---------- 日志配置 ----------
-    LOG_LEVEL: str = "INFO"
-    LOG_FILE: str = "logs/app.log"
-
-    # ---------- CORS 配置 ----------
-    @property
-    def CORS_ORIGINS(self) -> List[str]:
-        """CORS 允许的来源列表"""
-        return [
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-            "http://localhost:8080",
-        ]
-
-    # ---------- 环境判断 ----------
     @property
     def IS_PRODUCTION(self) -> bool:
         """是否生产环境"""

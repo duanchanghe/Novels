@@ -1,20 +1,22 @@
 # ===========================================
-# AI 有声书工坊 - Python 依赖
+# AI 有声书工坊 - Django 后端
 # ===========================================
+#
+# 本地开发环境使用 Python 虚拟环境运行
+# Docker Compose 仅在业务打磨稳定后启用
+#
 
-# Web Framework
-fastapi==0.110.0
-uvicorn[standard]==0.27.1
-python-multipart==0.0.9
+Django==5.0.4
+djangorestframework==3.15.1
+django-cors-headers==4.3.1
 
 # Database
-sqlalchemy==2.0.27
 psycopg2-binary==2.9.9
-alembic==1.13.1
 
 # Redis & Celery
 redis==5.0.1
 celery[redis]==5.3.6
+django-celery-beat==2.5.0
 flower==2.0.1
 
 # MinIO (S3 Compatible Object Storage)
@@ -46,11 +48,14 @@ passlib[bcrypt]==1.7.4
 
 # Development & Testing
 pytest==7.4.4
+pytest-django==4.8.0
 pytest-asyncio==0.23.4
 pytest-cov==4.1.0
-httpx==0.27.0
 
 # Code Quality
 black==24.2.0
 ruff==0.2.1
-mypy==1.8.0
+isort==5.13.2
+
+# Gunicorn (for production)
+gunicorn==21.2.0

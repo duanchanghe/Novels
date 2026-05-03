@@ -15,23 +15,38 @@ services:
       - APP_NAME=${APP_NAME}
       - APP_ENV=${APP_ENV}
       - APP_DEBUG=${APP_DEBUG}
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - PYTHONPATH=/app
       - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-audiobook_db}
+      - DB_USER=${DB_USER:-audiobook_user}
+      - DB_PASSWORD=${DB_PASSWORD:-your-db-password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=${REDIS_DB:-0}
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
       - MINIO_SECURE=false
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
       - MINIMAX_API_KEY=${MINIMAX_API_KEY}
+      - MINIMAX_API_HOST=${MINIMAX_API_HOST:-https://api.minimax.chat}
       - MINIMAX_GROUP_ID=${MINIMAX_GROUP_ID}
       - WATCH_DIR=${WATCH_DIR:-/books/incoming}
       - WATCH_DIRS=${WATCH_DIRS:-}
+      - WATCH_INTERVAL=${WATCH_INTERVAL:-60}
+      - WATCH_ENABLED=${WATCH_ENABLED:-true}
       - WATCH_MAX_FILE_SIZE_MB=${WATCH_MAX_FILE_SIZE_MB:-500}
       - WATCH_CONCURRENT=${WATCH_CONCURRENT:-3}
       - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
       - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
-      - WATCH_ENABLED=${WATCH_ENABLED:-false}
       - COST_DAILY_LIMIT=${COST_DAILY_LIMIT:-50}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ./backend:/app
       - ./books:/books
@@ -47,7 +62,7 @@ services:
     networks:
       - audiobook-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -60,20 +75,35 @@ services:
       dockerfile: backend/Dockerfile
     container_name: audiobook-celery-worker
     working_dir: /app
-    command: sh -c "export PYTHONPATH=/app && celery -A tasks.celery_app worker --loglevel=info --concurrency=1 -Q celery,analyze,pipeline,watch"
+    command: celery -A config worker --loglevel=info --concurrency=2 -Q celery,analyze,pipeline,watch
     environment:
       - PYTHONPATH=/app
+      - DJANGO_SETTINGS_MODULE=config.settings
       - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-audiobook_db}
+      - DB_USER=${DB_USER:-audiobook_user}
+      - DB_PASSWORD=${DB_PASSWORD:-your-db-password}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=${REDIS_DB:-0}
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
-      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       - MINIMAX_API_KEY=${MINIMAX_API_KEY}
-      - WATCH_DIR=${WATCH_DIR}
-      - WATCH_DIRS=${WATCH_DIRS}
-      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR}
-      - WATCH_ENABLED=${WATCH_ENABLED:-false}
+      - MINIMAX_API_HOST=${MINIMAX_API_HOST:-https://api.minimax.chat}
+      - MINIMAX_GROUP_ID=${MINIMAX_GROUP_ID}
+      - WATCH_DIR=${WATCH_DIR:-/books/incoming}
+      - WATCH_DIRS=${WATCH_DIRS:-}
+      - WATCH_INTERVAL=${WATCH_INTERVAL:-60}
+      - WATCH_ENABLED=${WATCH_ENABLED:-true}
+      - WATCH_MAX_FILE_SIZE_MB=${WATCH_MAX_FILE_SIZE_MB:-500}
+      - WATCH_CONCURRENT=${WATCH_CONCURRENT:-3}
+      - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
+      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
     volumes:
       - ./books:/books
       - ./data:/data
@@ -95,9 +125,10 @@ services:
       dockerfile: backend/Dockerfile
     container_name: audiobook-celery-beat
     working_dir: /app
-    command: celery -A tasks.celery_app beat --loglevel=info
+    command: celery -A config beat --loglevel=info
     environment:
-      - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - PYTHONPATH=/app
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
       - WATCH_DIR=${WATCH_DIR:-/books/incoming}
       - WATCH_DIRS=${WATCH_DIRS:-}

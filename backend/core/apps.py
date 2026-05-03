@@ -1,0 +1,15 @@
+# ===========================================
+# Core App Configuration
+# ===========================================
+
+"""
+Core app configuration for AI 有声书工坊.
+"""
+
+from django.apps import AppConfig
+
+
+class CoreConfig(AppConfig):
+    default_auto_field = "django.db.models.BigAutoField"
+    name = "core"
+    verbose_name = "核心模块"

@@ -211,7 +211,7 @@ run_tests() {
     cd "$PROJECT_ROOT"
 
     # 运行集成测试
-    docker-compose exec -T backend python scripts/test_full_pipeline.py
+    docker-compose exec -T backend python backend/scripts/test_full_pipeline.py
 
     log_success "测试完成"
 }

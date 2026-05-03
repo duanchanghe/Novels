@@ -766,69 +766,60 @@ def check_cost_budget(self) -> Dict[str, Any]:
     }
 
 
+
 # ===========================================
-# 健康检查端点
+# 健康检查端点 (Django 兼容)
 # ===========================================
 
-def get_monitoring_endpoints():
+def get_health_status():
     """
-    获取监控相关的 API 端点
+    获取系统健康状态
 
-    可用于 FastAPI 路由注册。
+    Returns:
+        dict: 健康状态
     """
+    collector = MetricsCollector()
+    services = collector.collect_service_metrics()
 
-    from fastapi import APIRouter
+    all_healthy = all(
+        s.get("available", False)
+        for s in services.values()
+        if isinstance(s, dict)
+    )
 
-    router = APIRouter(prefix="/monitoring", tags=["监控"])
+    return {
+        "status": "healthy" if all_healthy else "degraded",
+        "services": services,
+    }
 
-    @router.get("/health")
-    async def get_health():
-        """获取系统健康状态"""
-        collector = MetricsCollector()
-        services = collector.collect_service_metrics()
 
-        all_healthy = all(
-            s.get("available", False)
-            for s in services.values()
-            if isinstance(s, dict)
-        )
+def get_metrics():
+    """获取完整监控指标"""
+    collector = MetricsCollector()
+    return collector.collect_all()
 
-        return {
-            "status": "healthy" if all_healthy else "degraded",
-            "services": services,
-        }
 
-    @router.get("/metrics")
-    async def get_metrics():
-        """获取完整监控指标"""
-        collector = MetricsCollector()
-        return collector.collect_all()
+def get_report():
+    """获取监控报告"""
+    monitor = MonitoringService()
+    return monitor.get_full_report()
 
-    @router.get("/report")
-    async def get_report():
-        """获取监控报告"""
-        monitor = MonitoringService()
-        return monitor.get_full_report()
 
-    @router.get("/alerts")
-    async def get_alerts(
-        level: str = None,
-        since: str = None,
-        limit: int = 100,
-    ):
-        """获取告警历史"""
-        alert_level = AlertLevel(level) if level else None
-        since_dt = datetime.fromisoformat(since) if since else None
+def get_alerts(level: str = None, since: str = None, limit: int = 100):
+    """获取告警历史"""
+    from core.models.alert import AlertLevel
+    from datetime import datetime
 
-        alerts = alert_manager.get_history(
-            level=alert_level,
-            since=since_dt,
-            limit=limit,
-        )
+    alert_level = AlertLevel(level) if level else None
+    since_dt = datetime.fromisoformat(since) if since else None
 
-        return {
-            "count": len(alerts),
-            "alerts": [a.to_dict() for a in alerts],
-        }
+    alerts = alert_manager.get_history(
+        level=alert_level,
+        since=since_dt,
+        limit=limit,
+    )
 
-    return router
+    return {
+        "count": len(alerts),
+        "alerts": [a.to_dict() for a in alerts],
+    }

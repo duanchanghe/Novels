@@ -1362,12 +1362,6 @@ def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
                 db.commit()
         raise
 
-    except Exception as e:
-        total_time = time.time() - total_start
-        logger.error(f"[Book {book_id}] 流水线执行失败: {e} (耗时: {total_time:.1f}s)")
-        _update_book_error(book_id, str(e))
-        raise
-
 
 def _wait_for_result(async_result, timeout: int = 300):
     """

@@ -9,7 +9,6 @@
 - svc_epub_parser: EPUB 解析引擎
 - svc_chapter_cleaner: 章节正文清洗器
 - svc_text_preprocessor: 文本预处理
-- svc_novel_text_processor: 网络小说文本处理
 - svc_deepseek_analyzer: DeepSeek 分析引擎
 - svc_minimax_tts: MiniMax TTS 合成引擎
 - svc_audio_postprocessor: 音频后处理
