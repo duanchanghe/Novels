@@ -21,6 +21,7 @@ from models.model_book import BookStatus
 from models.model_chapter import ChapterStatus
 from schemas import BookResponse, BookListResponse, ChapterResponse
 from services.svc_minio_storage import get_storage_service
+from utils.util_cache import api_cache
 
 
 router = APIRouter(prefix="/books", tags=["书籍管理"])
@@ -47,6 +48,14 @@ async def list_books(
     Returns:
         BookListResponse: 书籍列表
     """
+    # 缓存键（仅对无搜索条件的结果缓存）
+    use_cache = not search
+    if use_cache:
+        cache_key = f"books:list:{page}:{page_size}:{status}"
+        cached = api_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     query = db.query(Book).filter(Book.deleted_at == None)
 
     # 状态筛选
@@ -77,12 +86,16 @@ async def list_books(
         .all()
     )
 
-    return BookListResponse(
+    # 无搜索条件时缓存结果
+    result = BookListResponse(
         total=total,
         page=page,
         page_size=page_size,
         items=[BookResponse.model_validate(book) for book in books],
     )
+    if use_cache:
+        api_cache.set(cache_key, result.model_dump(mode="json"), ttl=60)
+    return result
 
 
 @router.get("/{book_id}", response_model=BookResponse)

@@ -8,15 +8,14 @@
 集中管理项目中多处重复使用的常量定义：
 - 音色映射表（svc_minimax_tts / svc_voice_mapper 原有重复）
 - 情感参数映射表
-- 角色映射表
-- 网络小说特有角色映射
 - 音频后处理配置
+- 多音字消歧规则库
 
 使用场景：
-- svc_minimax_tts.py → from core.constants import VOICE_MAP
-- svc_voice_mapper.py → from core.constants import ROLE_MAP, EMOTION_MAP
-- svc_audio_postprocessor.py → from core.constants import PAUSE_CONFIG
-- svc_deepseek_analyzer.py → from core.constants import POLYPHONE_DICT
+- svc_minimax_tts.py     → from core.constants import VOICE_MAP_SIMPLE, EMOTION_PARAM_MAP
+- svc_voice_mapper.py    → from core.constants import ROLE_VOICE_MAP, EMOTION_PARAM_MAP
+- svc_audio_postprocessor.py → from core.constants import PAUSE_CONFIG, EQ_CONFIG, TARGET_LUFS
+- svc_deepseek_analyzer.py  → from core.constants import POLYPHONE_DICT, POLYPHONE_RULES
 """
 
 # ===========================================
@@ -279,15 +278,80 @@ DEFAULT_BITRATE_STANDARD = "192k"  # 标准比特率
 # ===========================================
 
 POLYPHONE_DICT = {
-    "行": {"银行": "háng", "行为": "xíng", "行吗": "xíng", "一行": "xíng"},
-    "说": {"说服": "shuō", "游说": "shuì", "说客": "shuō"},
-    "了": {"了解": "liǎo", "走了": "le", "了结": "liǎo"},
-    "着": {"看着": "zhe", "着急": "zháo", "衣着": "zhuó"},
-    "得": {"得到": "dé", "跑得快": "de", "必须": "děi"},
-    "为": {"因为": "wèi", "作为": "wéi"},
-    "还": {"还有": "hái", "归还": "huán"},
-    "只": {"只要": "zhǐ", "一只": "zhī"},
-    "长": {"成长": "zhǎng", "长度": "cháng", "长大": "zhǎng"},
-    "重": {"重要": "zhòng", "重新": "chóng", "重量": "zhòng"},
-    "传": {"传说": "chuán", "传记": "zhuàn"},
+    # ── 行 ──
+    "行": {
+        "银行": "háng", "行为": "xíng", "行吗": "xíng", "一行": "xíng", "步行": "xíng",
+        "发行": "xíng", "行业": "háng", "行当": "háng", "行家": "háng",
+    },
+    # ── 长 ──
+    "长": {
+        "长短": "cháng", "长度": "cháng", "很长": "cháng", "成长": "cháng",
+        "修长": "cháng", "长处": "cháng", "长大": "zhǎng",
+    },
+    # ── 为 ──
+    "为": {
+        "因为": "wèi", "为了": "wèi", "为何": "wèi", "行为": "wéi", "作为": "wéi", "认为": "wéi",
+    },
+    # ── 还 ──
+    "还": {
+        "还有": "hái", "还是": "hái", "还好": "hái", "归还": "huán", "还书": "huán", "还债": "huán",
+    },
+    # ── 只 ──
+    "只": {
+        "只要": "zhǐ", "只有": "zhǐ", "只是": "zhǐ", "一只": "zhī", "船只": "zhī", "只身": "zhī",
+    },
+    # ── 得 ──
+    "得": {
+        "得到": "dé", "获得": "dé", "得意": "dé", "心得": "dé", "跑得快": "de", "很好": "de",
+    },
+    # ── 重 ──
+    "重": {
+        "重要": "zhòng", "重量": "zhòng", "重大": "zhòng", "重点": "zhòng",
+        "重复": "chóng", "重新": "chóng", "重庆": "chóng",
+    },
+    # ── 空 ──
+    "空": {
+        "空间": "kōng", "天空": "kōng", "航空": "kōng",
+        "空着": "kòng", "空隙": "kòng", "空地": "kòng",
+    },
+    # ── 教 ──
+    "教": {
+        "教育": "jiào", "教师": "jiào", "教学": "jiào", "请教": "qǐng",
+    },
+    # ── 差 ──
+    "差": {
+        "差异": "chā", "差别": "chā", "差距": "chā", "差错": "chā",
+        "差不多": "chà", "很差": "chà", "差点": "chà",
+    },
+    # ── 数 ──
+    "数": {
+        "数字": "shù", "数据": "shù", "数学": "shù",
+        "数一数": "shǔ", "数不清": "shǔ", "数数": "shǔ",
+    },
+    # ── 说 ──
+    "说": {
+        "说服": "shuō", "游说": "shuì", "说客": "shuō",
+    },
+    # ── 了 ──
+    "了": {
+        "了解": "liǎo", "走了": "le", "了结": "liǎo",
+    },
+    # ── 着 ──
+    "着": {
+        "看着": "zhe", "着急": "zháo", "衣着": "zhuó",
+    },
+    # ── 传 ──
+    "传": {
+        "传说": "chuán", "传记": "zhuàn",
+    },
 }
+
+
+# ── 扁平展开后的规则库（供检测算法直接使用）──────────────────────────────────
+# 从嵌套结构展开为 {短语: 读音}，便于快速匹配
+POLYPHONE_RULES: dict = {
+    phrase: pinyin
+    for entries in POLYPHONE_DICT.values()
+    for phrase, pinyin in entries.items()
+}
+

@@ -24,6 +24,7 @@ from models.model_chapter import ChapterStatus
 from services.svc_epub_parser import EPUBParserService
 from services.svc_minio_storage import get_storage_service
 from services.svc_chapter_cleaner import clean_chapter_text
+from utils.util_cache import api_cache
 
 
 logger = logging.getLogger("audiobook.upload")
@@ -148,6 +149,9 @@ async def upload_epub(
         from tasks.task_pipeline import process_chapter
         for chapter in db.query(Chapter).filter(Chapter.book_id == book.id).all():
             process_chapter.delay(chapter.id)
+        # 上传成功后清除书籍列表缓存
+        api_cache.invalidate_pattern("books:list:*")
+
         logger.info(
             f"上传完成，已触发 {book.total_chapters} 章逐章处理"
         )

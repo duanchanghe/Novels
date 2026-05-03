@@ -29,6 +29,7 @@ from pydub import AudioSegment
 from pydub.effects import normalize, compress_dynamic_range
 
 from core.config import settings
+from core.constants import PAUSE_CONFIG, EQ_CONFIG, TARGET_LUFS, PEAK_LIMIT_DB
 from core.exceptions import AppError
 
 
@@ -53,25 +54,15 @@ class AudioPostprocessorService:
         self.bit_rate = settings.AUDIO_BITRATE
         self.crossfade_ms = settings.AUDIO_CROSSFADE_MS
 
-        # 停顿时长配置（毫秒）
-        self.PAUSE_CONFIG = {
-            "sentence_end": 500,      # 句号/问号/感叹号后
-            "paragraph_end": 1000,    # 段落结束
-            "chapter_end": 2500,       # 章节结束
-            "emotion_pause": 300,     # 情感切换停顿
-            "dialogue_break": 200,    # 对话间隔
-        }
+        # 停顿时长配置（来自 core.constants 共享常量）
+        self.PAUSE_CONFIG = PAUSE_CONFIG
 
-        # LUFS 标准化目标
-        self.TARGET_LUFS = -16.0  # Spotify/YouTube 标准
+        # LUFS 标准化目标（来自 core.constants）
+        self.TARGET_LUFS = TARGET_LUFS
+        self.PEAK_LIMIT_DB = PEAK_LIMIT_DB
 
-        # EQ 配置（保留语音频段）
-        self.EQ_CONFIG = {
-            "low_cut": 80,       # 低频切除（Hz）
-            "high_boost": 3000,  # 高频提升起始点（Hz）
-            "high_boost_db": 2,  # 高频提升量（dB）
-            "low_cut_db": -3,    # 低频切除量（dB）
-        }
+        # EQ 配置（来自 core.constants）
+        self.EQ_CONFIG = EQ_CONFIG
 
     def process_chapter(
         self,

@@ -1609,6 +1609,11 @@
 | **V1.4** | 2026-05-01 | 阶段五自动化层完成：M9文件夹监听服务(watchdog/文件就绪检测/MD5去重/多目录监听/并发控制)、M10自动发布引擎(发布渠道抽象/多渠道并行/重试机制)、前端设置页面增强、集成测试 | - |
 | **V1.5** | 2026-05-01 | 阶段五优化完善：跨平台文件锁(MacOS/Windows/Linux)、队列超时防阻塞、服务重启优化、Dead-letter失败文件处理、数据库会话一致性优化、Celery Beat定时任务配置 | - |
 | **V1.6** | 2026-05-01 | 阶段六接口与前端层完成：M11后端API(书籍管理/上传/音频获取/监听/发布)、M12前端界面(首页/书架/详情页播放器增强/监听状态/设置/发布历史) | - |
+| **V1.7** | 2026-05-03 | 阶段七优化完善：性能追踪/并行状态冲突修复/分级告警/性能基准测试评级 | - |
+| **V1.7.1** | 2026-05-03 | 数据库性能优化：新增002索引迁移脚本（books/chapters/segments表复合索引） | - |
+| **V1.7.2** | 2026-05-03 | 章节正文清洗模块：svc_chapter_cleaner（HTML清理/乱码检测/质量报告） | - |
+| **V1.7.3** | 2026-05-03 | 共享常量模块重构：core/constants.py统一音色/情感/停顿/多音字常量 | - |
+| **V1.7.4** | 2026-05-03 | API缓存工具：Redis缓存+TTL+穿透保护+自动降级（utils/util_cache.py） | - |
 
 > ✅ V1.4 新增：阶段五自动化层完整实现，含文件夹监听服务（watchdog 实时监听、文件就绪检测、MD5 去重、Celery Beat 兜底扫描、多目录监听、并发控制、文件锁机制）和自动发布引擎（发布渠道抽象基类、自建平台/喜马拉雅/蜻蜓FM 渠道、多渠道并行发布、重试机制）。
 
@@ -1628,3 +1633,34 @@
 > - test_full_pipeline 添加性能基准测试和评级系统（excellent/good/acceptable/poor）
 > - add get_pipeline_history 和 cancel_pipeline 辅助任务
 > - generate_audiobook_simple 改为调用完整流水线
+
+> ✅ V1.7.1 数据库性能优化（2026-05-03）：
+> - 新增数据库索引迁移脚本 `backend/alembic/versions/002_add_performance_indexes.py`
+> - books 表添加 `(deleted_at, status)` 复合索引（软删除+状态筛选）
+> - chapters 表添加 `(book_id, status)` 和 `(status)` 索引
+> - audio_segments 表添加 `(chapter_id, status)` 和 `(status)` 索引
+> - 优化高频查询性能（书籍列表、章节列表、片段状态查询）
+
+> ✅ V1.7.2 章节正文清洗模块（2026-05-03）：
+> - 新增 `backend/services/svc_chapter_cleaner.py` 章节正文清洗器
+> - 移除 HTML 标签、页眉页脚、脚注尾注、版权声明等非正文内容
+> - 移除 EPUB 解析残留物（文件位置锚点、空标签行等）
+> - 乱码检测与过滤、章节标题模式匹配（避免重复朗读）
+> - 输出 CleanResult 质量报告
+
+> ✅ V1.7.3 共享常量模块重构（2026-05-03）：
+> - 新增 `backend/core/constants.py` 集中管理所有常量定义
+> - 统一音色 ID 常量（VoiceID 类）、角色→音色映射表（ROLE_VOICE_MAP）
+> - 统一情感参数映射表（EMOTION_PARAM_MAP）、音频后处理配置（PAUSE_CONFIG、EQ_CONFIG）
+> - 统一多音字消歧规则库（POLYPHONE_DICT）
+> - 消除 svc_minimax_tts、svc_voice_mapper、svc_audio_postprocessor 等模块间的重复定义
+
+> ✅ V1.7.4 API 缓存工具（2026-05-03）：
+> - 新增 `backend/utils/util_cache.py` 基于 Redis 的 API 响应缓存
+> - APICache 类支持 TTL、主动失效、模式批量失效
+> - `@cached` 装饰器自动缓存函数返回值
+> - Redis 不可用时自动降级（跳过缓存）、缓存穿透保护（get_or_set 语义）
+
+> ✅ V1.7.5 配置增强与代码规范：
+> - config.py 配置项整理优化
+> - util_rate_limiter.py 令牌桶限流器完善
