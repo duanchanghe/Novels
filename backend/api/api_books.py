@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from core.database import get_db
 from core.config import settings
 from models import Book, Chapter
-from models.model_book import BookStatus
+from models.model_book import BookStatus, SourceType, GenerationMode
 from models.model_chapter import ChapterStatus
 from schemas import BookResponse, BookListResponse, ChapterResponse
 from services.svc_minio_storage import get_storage_service
@@ -181,6 +181,7 @@ async def get_book_status(
 @router.post("/{book_id}/generate")
 async def trigger_generation(
     book_id: int,
+    generation_mode: str = Query("auto", description="生成模式: auto=自动, manual=手动"),
     db: Session = Depends(get_db),
 ):
     """
@@ -188,6 +189,7 @@ async def trigger_generation(
 
     Args:
         book_id: 书籍ID
+        generation_mode: 生成模式（auto=自动模式，manual=手动模式）
         db: 数据库会话
 
     Returns:
@@ -200,6 +202,14 @@ async def trigger_generation(
     if book.status == BookStatus.DONE:
         raise HTTPException(status_code=400, detail="书籍已完成生成")
 
+    # 保存生成模式
+    try:
+        mode = GenerationMode(generation_mode)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的生成模式，只能是 auto 或 manual")
+    book.generation_mode = mode
+    db.commit()
+
     # 提交完整流水线 Celery 任务
     from tasks.task_pipeline import generate_audiobook_simple
     result = generate_audiobook_simple.delay(book_id)
@@ -207,7 +217,60 @@ async def trigger_generation(
     return {
         "book_id": book_id,
         "task_id": result.id,
+        "generation_mode": mode.value,
         "status": "pending",
+    }
+
+
+@router.post("/{book_id}/chapters/{chapter_id}/confirm")
+async def confirm_chapter(
+    book_id: int,
+    chapter_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    确认开始下一章（手动模式）
+
+    当章节状态为 AWAITING_CONFIRM 时，调用此接口开始处理下一章。
+
+    Args:
+        book_id: 书籍ID
+        chapter_id: 当前章节ID（需为 AWAITING_CONFIRM 状态）
+        db: 数据库会话
+
+    Returns:
+        dict: 确认结果
+    """
+    from tasks.task_pipeline import process_chapter
+
+    book = db.query(Book).filter(Book.id == book_id).first()
+    if not book:
+        raise HTTPException(status_code=404, detail="书籍不存在")
+
+    chapter = db.query(Chapter).filter(
+        Chapter.id == chapter_id,
+        Chapter.book_id == book_id,
+    ).first()
+    if not chapter:
+        raise HTTPException(status_code=404, detail="章节不存在")
+
+    if chapter.status != ChapterStatus.AWAITING_CONFIRM:
+        raise HTTPException(
+            status_code=400,
+            detail=f"章节状态为 {chapter.status.value}，无需确认"
+        )
+
+    # 触发下一章处理
+    chapter.status = ChapterStatus.PENDING
+    db.commit()
+    process_chapter.delay(chapter_id)
+
+    return {
+        "book_id": book_id,
+        "chapter_id": chapter_id,
+        "chapter_title": chapter.title,
+        "status": "pending",
+        "message": f"第 {chapter.chapter_index} 章已开始处理",
     }
 
 

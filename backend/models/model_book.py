@@ -62,6 +62,17 @@ class SourceType(str, enum.Enum):
     WATCH = "watch"
 
 
+class GenerationMode(str, enum.Enum):
+    """
+    有声书生成模式枚举
+
+    - auto: 自动模式（章节完成后自动开始下一章）
+    - manual: 手动模式（每章完成后需用户确认才开始下一章）
+    """
+    AUTO = "auto"
+    MANUAL = "manual"
+
+
 class Book(Base):
     """
     书籍数据模型
@@ -126,6 +137,14 @@ class Book(Base):
     full_audio_duration = Column(Integer, nullable=True, comment="完整有声书时长（秒）")
     full_audio_size = Column(BigInteger, nullable=True, comment="完整有声书大小（字节）")
     full_audio_format = Column(String(20), default="m4b", comment="完整有声书格式")
+
+    # 生成模式
+    generation_mode = Column(
+        String(20),
+        default="auto",
+        nullable=False,
+        comment="生成模式：auto=自动, manual=手动",
+    )
 
     # 自动发布配置
     auto_publish_enabled = Column(Boolean, default=False, comment="是否启用自动发布")
@@ -207,6 +226,7 @@ class Book(Base):
             "full_audio_duration": self.full_audio_duration,
             "full_audio_size": self.full_audio_size,
             "full_audio_format": self.full_audio_format,
+            "generation_mode": self.generation_mode or "auto",
             "auto_publish_enabled": self.auto_publish_enabled,
             "error_message": self.error_message,
             "created_at": self.created_at.isoformat() if self.created_at else None,

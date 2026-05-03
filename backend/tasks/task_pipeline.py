@@ -1025,7 +1025,7 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
     logger.info(f"[Chapter {chapter_id}] === 事件触发：开始逐章处理 ===")
 
     from models import AudioSegment, Book
-    from models.model_book import BookStatus
+    from models.model_book import BookStatus, GenerationMode
     from models.model_chapter import ChapterStatus
     from models.model_segment import SegmentStatus
 
@@ -1060,25 +1060,77 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
         logger.info(f"[Chapter {chapter_id}] 阶段六：音频后处理")
         postprocess_chapter(chapter_id)
 
-        # 检查是否所有章节都完成 → 触发发布
+        # ── 检查是否所有章节都完成 → 触发发布 ──
         _try_publish_book(chapter_id)
 
-        logger.info(f"[Chapter {chapter_id}] ✅ 章节全部处理完成")
-        return {
-            "chapter_id": chapter_id,
-            "success": True,
-        }
+        # ── 根据生成模式决定是否自动触发下一章 ──
+        with get_db_context() as db:
+            from models import Chapter
+            chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+            if not chapter:
+                return {"chapter_id": chapter_id, "success": True}
+
+            book = db.query(Book).filter(Book.id == chapter.book_id).first()
+            next_chapter = (
+                db.query(Chapter)
+                .filter(Chapter.book_id == chapter.book_id)
+                .filter(Chapter.chapter_index == chapter.chapter_index + 1)
+                .first()
+            )
+
+            if not next_chapter:
+                # 没有下一章 → 标记当前章完成
+                chapter.status = ChapterStatus.DONE
+                db.commit()
+                logger.info(f"[Chapter {chapter_id}] ✅ 章节全部处理完成")
+                return {"chapter_id": chapter_id, "success": True}
+
+            if book and book.generation_mode == GenerationMode.MANUAL:
+                # ── 手动模式：暂停，等待用户确认 ──
+                chapter.status = ChapterStatus.DONE
+                # 找出下下章
+                next_next = (
+                    db.query(Chapter)
+                    .filter(Chapter.book_id == chapter.book_id)
+                    .filter(Chapter.chapter_index == next_chapter.chapter_index + 1)
+                    .first()
+                )
+                next_chapter.status = ChapterStatus.AWAITING_CONFIRM
+                next_chapter.next_chapter_id = next_next.id if next_next else None
+                db.commit()
+                logger.info(
+                    f"[Chapter {chapter_id}] ⏸ 手动模式：第 {chapter.chapter_index} 章完成，"
+                    f"第 {next_chapter.chapter_index} 章等待确认"
+                )
+                return {
+                    "chapter_id": chapter_id,
+                    "success": True,
+                    "mode": "manual",
+                    "next_chapter_id": next_chapter.id,
+                }
+            else:
+                # ── 自动模式：自动触发下一章 ──
+                chapter.status = ChapterStatus.DONE
+                db.commit()
+                process_chapter.delay(next_chapter.id)
+                logger.info(
+                    f"[Chapter {chapter_id}] ✅ 自动模式：第 {chapter.chapter_index} 章完成，"
+                    f"自动触发第 {next_chapter.chapter_index} 章"
+                )
+                return {
+                    "chapter_id": chapter_id,
+                    "success": True,
+                    "mode": "auto",
+                    "next_chapter_id": next_chapter.id,
+                }
 
     except Exception as e:
         logger.error(f"[Chapter {chapter_id}] 章节处理失败: {e}")
         with get_db_context() as db:
-            from models import Chapter, Book
+            from models import Chapter
             chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
             if chapter:
-                # 重试计数递增
                 retry_count = (chapter.failed_segments or 0) + 1
-
-                # 超过重试上限 → 标记为失败但继续其他章节
                 if retry_count >= 3:
                     chapter.status = ChapterStatus.FAILED
                     chapter.error_message = f"[{retry_count}次重试] {str(e)}"
@@ -1087,20 +1139,13 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
                         f"标记为失败，继续处理其他章节"
                     )
                 else:
-                    # 记录失败但保留 PENDING 状态供后续重试
                     chapter.failed_segments = retry_count
                     chapter.status = ChapterStatus.PENDING
                     chapter.error_message = str(e)
-
                 db.commit()
-
-                # 即使当前章节失败，也检查是否可以发布（部分完成）
                 _try_publish_book(chapter_id, retry_count >= 3)
 
-        # 不 re-raise：让其他章节继续处理
-        logger.info(
-            f"[Chapter {chapter_id}] 章节失败但不影响其他章节继续处理"
-        )
+        logger.info(f"[Chapter {chapter_id}] 章节失败但不影响其他章节继续处理")
         return {
             "chapter_id": chapter_id,
             "success": False,

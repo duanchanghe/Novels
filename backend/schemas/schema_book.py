@@ -38,6 +38,7 @@ class BookResponse(BaseModel):
     file_size: Optional[int] = None
     status: str
     source_type: str
+    generation_mode: str = "auto"
     total_chapters: int = 0
     processed_chapters: int = 0
     progress_percentage: float = 0.0

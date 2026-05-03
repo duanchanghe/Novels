@@ -39,6 +39,7 @@ class ChapterStatus(str, enum.Enum):
     - analyzing: 正在分析（DeepSeek分析中）
     - analyzed: 已分析（DeepSeek分析完成）
     - synthesizing: 正在合成（TTS进行中）
+    - awaiting_confirm: 等待确认（手动模式暂停点）
     - done: 完成
     - failed: 失败
     """
@@ -46,6 +47,7 @@ class ChapterStatus(str, enum.Enum):
     ANALYZING = "analyzing"
     ANALYZED = "analyzed"
     SYNTHESIZING = "synthesizing"
+    AWAITING_CONFIRM = "awaiting_confirm"
     DONE = "done"
     FAILED = "failed"
 
@@ -89,6 +91,13 @@ class Chapter(Base):
         default=ChapterStatus.PENDING,
         nullable=False,
         comment="处理状态",
+    )
+
+    # 下一章 ID（手动模式暂停点触发后记录）
+    next_chapter_id = Column(
+        Integer,
+        nullable=True,
+        comment="下一章ID（手动模式用）",
     )
 
     # 音频文件信息
@@ -154,6 +163,7 @@ class Chapter(Base):
             "chapter_index": self.chapter_index,
             "title": self.title,
             "status": self.status.value if self.status else None,
+            "next_chapter_id": self.next_chapter_id,
             "audio_url": self.audio_url,
             "audio_duration": self.audio_duration,
             "audio_format": self.audio_format,

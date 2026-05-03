@@ -9,6 +9,7 @@ export interface Book {
   file_hash: string;
   status: BookStatus;
   source_type: SourceType;
+  generation_mode: GenerationMode;
   total_chapters: number;
   processed_chapters: number;
   progress_percentage: number;
@@ -18,7 +19,7 @@ export interface Book {
   updated_at: string;
 }
 
-export type BookStatus = 
+export type BookStatus =
   | 'pending'
   | 'analyzing'
   | 'synthesizing'
@@ -28,6 +29,8 @@ export type BookStatus =
   | 'failed';
 
 export type SourceType = 'manual' | 'watch';
+
+export type GenerationMode = 'auto' | 'manual';
 
 // 章节相关类型
 export interface Chapter {
@@ -40,6 +43,7 @@ export interface Chapter {
   analysis_result: any | null;
   characters: Character[] | null;
   status: ChapterStatus;
+  next_chapter_id: number | null;
   audio_file_path: string | null;
   audio_duration: number | null;
   audio_file_size: number | null;
@@ -48,11 +52,12 @@ export interface Chapter {
   updated_at: string;
 }
 
-export type ChapterStatus = 
+export type ChapterStatus =
   | 'pending'
   | 'analyzing'
   | 'analyzed'
   | 'synthesizing'
+  | 'awaiting_confirm'
   | 'done'
   | 'failed';
 
