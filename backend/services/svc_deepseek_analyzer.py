@@ -42,7 +42,7 @@ import httpx
 
 from core.config import settings
 from core.constants import POLYPHONE_DICT, POLYPHONE_RULES
-from core.exceptions import DeepSeekApiError
+from core.exceptions import DeepSeekAPIError as DeepSeekApiError
 
 
 logger = logging.getLogger("audiobook")

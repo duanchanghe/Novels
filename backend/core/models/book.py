@@ -8,13 +8,13 @@ from django.utils import timezone
 
 class BookStatus(models.TextChoices):
     """书籍处理状态枚举"""
-    PENDING = "pending", "等待处理"
-    ANALYZING = "analyzing", "正在分析"
-    SYNTHESIZING = "synthesizing", "正在合成"
-    POST_PROCESSING = "post_processing", "正在后处理"
-    PUBLISHING = "publishing", "正在发布"
-    DONE = "done", "完成"
-    FAILED = "failed", "失败"
+    PENDING = "PENDING", "等待处理"
+    ANALYZING = "ANALYZING", "正在分析"
+    SYNTHESIZING = "SYNTHESIZING", "正在合成"
+    POST_PROCESSING = "POST_PROCESSING", "正在后处理"
+    PUBLISHING = "PUBLISHING", "正在发布"
+    DONE = "DONE", "完成"
+    FAILED = "FAILED", "失败"
 
 
 class SourceType(models.TextChoices):

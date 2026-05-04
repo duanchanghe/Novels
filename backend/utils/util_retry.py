@@ -14,7 +14,7 @@ import logging
 import time
 from typing import Callable, Type, Tuple, Optional
 
-from core.exceptions import AppError
+from core.exceptions import ServiceError as AppError
 
 
 logger = logging.getLogger("audiobook")

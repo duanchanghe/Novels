@@ -136,12 +136,6 @@ build_images() {
     log_info "构建后端镜像..."
     docker build -t audiobook-backend:latest -f backend/Dockerfile .
 
-    # 构建前端镜像（如果存在）
-    if [ -f "frontend/Dockerfile" ]; then
-        log_info "构建前端镜像..."
-        docker build -t audiobook-frontend:latest -f frontend/Dockerfile .
-    fi
-
     log_success "镜像构建完成"
 }
 
@@ -327,7 +321,6 @@ clean_resources() {
 
         # 删除镜像
         docker rmi audiobook-backend:latest 2>/dev/null || true
-        docker rmi audiobook-frontend:latest 2>/dev/null || true
 
         # 删除数据
         rm -rf "$PROJECT_ROOT/data/postgres"/*

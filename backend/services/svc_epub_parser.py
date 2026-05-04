@@ -28,7 +28,7 @@ from bs4 import BeautifulSoup
 ITEM_IMAGE = 1  # EpubImage type
 ITEM_DOCUMENT = 9  # EpubHtml type
 
-from core.exceptions import EPUBParseError
+from core.domain.exceptions import EPUBParseError, DRMProtectedError
 
 
 logger = logging.getLogger("audiobook")
@@ -82,7 +82,7 @@ class EPUBParserService:
         try:
             # 检测 DRM
             if self._is_drm_protected(file_path):
-                raise EPUBParseError("EPUB 文件受 DRM 保护，无法解析")
+                raise DRMProtectedError()
 
             # 解析 EPUB
             book = epub.read_epub(file_path)
@@ -144,7 +144,7 @@ class EPUBParserService:
 
             # 检测 DRM
             if self._is_drm_protected_bytes(data):
-                raise EPUBParseError("EPUB 文件受 DRM 保护，无法解析")
+                raise DRMProtectedError()
 
             book = epub.read_epub(BytesIO(data))
 

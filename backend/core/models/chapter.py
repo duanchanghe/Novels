@@ -1,21 +1,35 @@
 """
 章节数据模型
 """
+import json
 from django.db import models
 from django.utils import timezone
 
 from .book import Book
 
 
+class CompatibleJSONField(models.JSONField):
+    """兼容的 JSONField，能处理已存储为 Python 对象的情况"""
+    
+    def from_db_value(self, value, expression, connection):
+        if value is None:
+            return None
+        if isinstance(value, (dict, list)):
+            return value
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
+
+
 class ChapterStatus(models.TextChoices):
     """章节处理状态枚举"""
-    PENDING = "pending", "等待处理"
-    ANALYZING = "analyzing", "正在分析"
-    ANALYZED = "analyzed", "已分析"
-    SYNTHESIZING = "synthesizing", "正在合成"
-    AWAITING_CONFIRM = "awaiting_confirm", "等待确认"
-    DONE = "done", "完成"
-    FAILED = "failed", "失败"
+    PENDING = "PENDING", "等待处理"
+    ANALYZING = "ANALYZING", "正在分析"
+    ANALYZED = "ANALYZED", "已分析"
+    SYNTHESIZING = "SYNTHESIZING", "正在合成"
+    AWAITING_CONFIRM = "AWAITING_CONFIRM", "等待确认"
+    DONE = "DONE", "完成"
+    FAILED = "FAILED", "失败"
 
 
 class Chapter(models.Model):
@@ -33,8 +47,8 @@ class Chapter(models.Model):
     raw_text = models.TextField(blank=True, null=True, verbose_name="原始文本")
     cleaned_text = models.TextField(blank=True, null=True, verbose_name="清洗后文本")
 
-    analysis_result = models.JSONField(blank=True, null=True, verbose_name="分析结果JSON")
-    characters = models.JSONField(blank=True, null=True, verbose_name="角色列表")
+    analysis_result = CompatibleJSONField(blank=True, null=True, verbose_name="分析结果JSON")
+    characters = CompatibleJSONField(blank=True, null=True, verbose_name="角色列表")
 
     status = models.CharField(
         max_length=20,

@@ -30,7 +30,7 @@ from pydub.effects import normalize, compress_dynamic_range
 
 from core.config import settings
 from core.constants import PAUSE_CONFIG, EQ_CONFIG, TARGET_LUFS, PEAK_LIMIT_DB
-from core.exceptions import AppError
+from core.exceptions import ServiceError as AppError
 
 
 logger = logging.getLogger("audiobook")
@@ -82,8 +82,8 @@ class AudioPostprocessorService:
             dict: 处理结果
         """
         from core.database import get_db_context
-        from models import Chapter, Book
-        from models.model_segment import SegmentStatus, AudioSegment as SegmentModel
+        from core.models import Chapter, Book
+        from core.models.segment import SegmentStatus, AudioSegment as SegmentModel
 
         with get_db_context() as db:
             chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
@@ -205,7 +205,7 @@ class AudioPostprocessorService:
             file_size: 文件大小（字节）
             format: 音频格式
         """
-        from models import Chapter, ChapterStatus
+        from core.models import Chapter, ChapterStatus
 
         chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
         if chapter:
@@ -237,7 +237,7 @@ class AudioPostprocessorService:
             file_size: 文件大小（字节）
             format: 音频格式
         """
-        from models import Book, BookStatus
+        from core.models import Book, BookStatus
 
         book = db.query(Book).filter(Book.id == book_id).first()
         if book:
@@ -690,7 +690,7 @@ class AudioPostprocessorService:
             dict: 处理结果
         """
         from core.database import get_db_context
-        from models import Chapter, Book, ChapterStatus
+        from core.models import Chapter, Book, ChapterStatus
 
         with get_db_context() as db:
             book = db.query(Book).filter(Book.id == book_id).first()

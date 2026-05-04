@@ -2,62 +2,76 @@
 # AI Audiobook Workshop - Docker Compose
 # ===========================================
 
+# 使用说明:
+# - 启动所有服务: docker compose up -d
+# - 停止所有服务: docker compose down
+
 services:
-  # ---------- 后端 API 服务 ----------
-  backend:
+  # ===========================================
+  # Django API Server
+  # ===========================================
+  api:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: audiobook-backend
+      target: production
+    container_name: audiobook-api
     ports:
       - "${APP_PORT:-8000}:8000"
     environment:
-      - APP_NAME=${APP_NAME}
-      - APP_ENV=${APP_ENV}
-      - APP_DEBUG=${APP_DEBUG}
+      - APP_NAME=${APP_NAME:-AI 有声书工坊}
+      - APP_ENV=${APP_ENV:-production}
+      - APP_DEBUG=${APP_DEBUG:-false}
       - DJANGO_SETTINGS_MODULE=config.settings
       - PYTHONPATH=/app
       - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      # Database
+      - DB_ENGINE=django.db.backends.postgresql
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=${DB_NAME:-audiobook_db}
       - DB_USER=${DB_USER:-audiobook_user}
       - DB_PASSWORD=${DB_PASSWORD:-your-db-password}
+      # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=${REDIS_DB:-0}
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      # MinIO
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
       - MINIO_SECURE=false
+      - MINIO_BUCKET_EPUB=${MINIO_BUCKET_EPUB:-books-epub}
+      - MINIO_BUCKET_AUDIO=${MINIO_BUCKET_AUDIO:-books-audio}
+      # DeepSeek
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
       - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      # MiniMax
       - MINIMAX_API_KEY=${MINIMAX_API_KEY}
       - MINIMAX_API_HOST=${MINIMAX_API_HOST:-https://api.minimax.chat}
       - MINIMAX_GROUP_ID=${MINIMAX_GROUP_ID}
+      # File Watcher
       - WATCH_DIR=${WATCH_DIR:-/books/incoming}
       - WATCH_DIRS=${WATCH_DIRS:-}
       - WATCH_INTERVAL=${WATCH_INTERVAL:-60}
-      - WATCH_ENABLED=${WATCH_ENABLED:-true}
-      - WATCH_MAX_FILE_SIZE_MB=${WATCH_MAX_FILE_SIZE_MB:-500}
+      - WATCH_ENABLED=${WATCH_ENABLED:-false}
       - WATCH_CONCURRENT=${WATCH_CONCURRENT:-3}
-      - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
-      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
-      - COST_DAILY_LIMIT=${COST_DAILY_LIMIT:-50}
+      - WATCH_MAX_FILE_SIZE_MB=${WATCH_MAX_FILE_SIZE_MB:-500}
+      # Logging
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
-      - ./backend:/app
-      - ./books:/books
-      - ./data/incoming:/data/incoming
+      - audiobook-media:/app/media
+      - audiobook-logs:/app/logs
+      - audiobook-books:/books
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      minio:
-        condition: service_started
     restart: unless-stopped
     networks:
       - audiobook-network
@@ -68,102 +82,88 @@ services:
       retries: 3
       start_period: 40s
 
-  # ---------- Celery Worker ----------
+  # ===========================================
+  # Celery Worker (Pipeline Tasks)
+  # ===========================================
   celery-worker:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      target: celery
     container_name: audiobook-celery-worker
     working_dir: /app
-    command: celery -A config worker --loglevel=info --concurrency=2 -Q celery,analyze,pipeline,watch
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=4 -Q pipeline,analyze,synthesize,celery
     environment:
-      - PYTHONPATH=/app
       - DJANGO_SETTINGS_MODULE=config.settings
+      - PYTHONPATH=/app
       - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
+      - DB_ENGINE=django.db.backends.postgresql
+      # Database
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_NAME=${DB_NAME:-audiobook_db}
       - DB_USER=${DB_USER:-audiobook_user}
       - DB_PASSWORD=${DB_PASSWORD:-your-db-password}
+      # Redis
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=${REDIS_DB:-0}
+      - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
+      # MinIO
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+      # DeepSeek
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      # MiniMax
       - MINIMAX_API_KEY=${MINIMAX_API_KEY}
       - MINIMAX_API_HOST=${MINIMAX_API_HOST:-https://api.minimax.chat}
       - MINIMAX_GROUP_ID=${MINIMAX_GROUP_ID}
+      # File Watcher
       - WATCH_DIR=${WATCH_DIR:-/books/incoming}
       - WATCH_DIRS=${WATCH_DIRS:-}
-      - WATCH_INTERVAL=${WATCH_INTERVAL:-60}
-      - WATCH_ENABLED=${WATCH_ENABLED:-true}
-      - WATCH_MAX_FILE_SIZE_MB=${WATCH_MAX_FILE_SIZE_MB:-500}
-      - WATCH_CONCURRENT=${WATCH_CONCURRENT:-3}
-      - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
-      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
+      - WATCH_ENABLED=${WATCH_ENABLED:-false}
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
-      - ./books:/books
-      - ./data:/data
+      - audiobook-books:/books
+      - audiobook-logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       minio:
-        condition: service_started
-    restart: unless-stopped
-    networks:
-      - audiobook-network
-
-  # ---------- Celery Beat (定时任务调度器) ----------
-  celery-beat:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    container_name: audiobook-celery-beat
-    working_dir: /app
-    command: celery -A config beat --loglevel=info
-    environment:
-      - DJANGO_SETTINGS_MODULE=config.settings
-      - PYTHONPATH=/app
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
-      - WATCH_DIR=${WATCH_DIR:-/books/incoming}
-      - WATCH_DIRS=${WATCH_DIRS:-}
-      - WATCH_ENABLED=${WATCH_ENABLED:-true}
-      - WATCH_INTERVAL=${WATCH_INTERVAL:-60}
-      - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
-      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
-    volumes:
-      - ./books:/books
-    depends_on:
-      redis:
         condition: service_healthy
     restart: unless-stopped
     networks:
       - audiobook-network
 
-  # ---------- File Watcher Service (watchdog) ----------
-  watchdog:
+  # ===========================================
+  # Celery Beat (Task Scheduler)
+  # ===========================================
+  celery-beat:
     build:
       context: .
       dockerfile: backend/Dockerfile
-    container_name: audiobook-watchdog
-    command: python -c "from services.svc_file_watcher import main; main()"
+      target: celery-beat
+    container_name: audiobook-celery-beat
+    working_dir: /app
+    command: celery -A tasks.celery_app beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     environment:
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - PYTHONPATH=/app
       - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
+      - DB_ENGINE=django.db.backends.postgresql
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
       - WATCH_DIR=${WATCH_DIR:-/books/incoming}
-      - WATCH_DIRS=${WATCH_DIRS:-}
-      - WATCH_MAX_FILE_SIZE_MB=${WATCH_MAX_FILE_SIZE_MB:-500}
-      - WATCH_CONCURRENT=${WATCH_CONCURRENT:-3}
-      - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
-      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
+      - WATCH_ENABLED=${WATCH_ENABLED:-false}
     volumes:
-      - ./books:/books
-      - ./data/incoming:/data/incoming
+      - audiobook-logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -172,21 +172,58 @@ services:
     restart: unless-stopped
     networks:
       - audiobook-network
-    profiles:
-      - watch
 
-  # ---------- Flower (Celery 监控) ----------
+  # ===========================================
+  # File Watcher Service
+  # ===========================================
+  watchdog:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: production
+    container_name: audiobook-watchdog
+    command: python -c "from services.svc_file_watcher import start_watcher; import time; start_watcher(); time.sleep(86400)"
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings
+      - PYTHONPATH=/app
+      - DB_ENGINE=django.db.backends.postgresql
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-audiobook_db}
+      - DB_USER=${DB_USER:-audiobook_user}
+      - DB_PASSWORD=${DB_PASSWORD:-your-db-password}
+      - WATCH_DIR=${WATCH_DIR:-/books/incoming}
+      - WATCH_DIRS=${WATCH_DIRS:-}
+      - WATCH_INTERVAL=${WATCH_INTERVAL:-60}
+      - WATCH_ENABLED=${WATCH_ENABLED:-true}
+      - WATCH_MAX_FILE_SIZE_MB=${WATCH_MAX_FILE_SIZE_MB:-500}
+      - WATCH_CONCURRENT=${WATCH_CONCURRENT:-3}
+      - WATCH_STATUS_INTERVAL=${WATCH_STATUS_INTERVAL:-300}
+      - WATCH_DEAD_LETTER_DIR=${WATCH_DEAD_LETTER_DIR:-/books/dead-letter}
+    volumes:
+      - audiobook-books:/books
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - audiobook-network
+
+  # ===========================================
+  # Flower (Celery Monitoring)
+  # ===========================================
   flower:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      target: production
     container_name: audiobook-flower
     command: celery -A tasks.celery_app flower --port=5555
     ports:
       - "${FLOWER_PORT:-5555}:5555"
     environment:
-      - DATABASE_URL=postgresql://${DB_USER:-audiobook_user}:${DB_PASSWORD:-your-db-password}@postgres:5432/${DB_NAME:-audiobook_db}
-      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
       - CELERY_BROKER_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
       - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-}@redis:6379/${REDIS_DB:-0}
     depends_on:
@@ -195,19 +232,19 @@ services:
     restart: unless-stopped
     networks:
       - audiobook-network
-    profiles:
-      - monitoring
 
-  # ---------- PostgreSQL 数据库 ----------
+  # ===========================================
+  # PostgreSQL Database
+  # ===========================================
   postgres:
     image: postgres:16-alpine
     container_name: audiobook-postgres
     environment:
-      - POSTGRES_DB=${DB_NAME}
-      - POSTGRES_USER=${DB_USER}
-      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME:-audiobook_db}
+      - POSTGRES_USER=${DB_USER:-audiobook_user}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-your-db-password}
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
     ports:
       - "${DB_PORT:-5432}:5432"
     restart: unless-stopped
@@ -219,14 +256,22 @@ services:
       timeout: 5s
       retries: 5
 
-  # ---------- Redis 缓存与消息队列 ----------
+  # ===========================================
+  # Redis (Cache & Message Queue)
+  # ===========================================
   redis:
     image: redis:7-alpine
     container_name: audiobook-redis
+    command: >
+      sh -c 'if [ -n "$REDIS_PASSWORD" ]; then
+        redis-server --requirepass "$REDIS_PASSWORD";
+      else
+        redis-server;
+      fi'
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
-      - ./data/redis:/data
+      - redis-data:/data
     restart: unless-stopped
     networks:
       - audiobook-network
@@ -236,19 +281,21 @@ services:
       timeout: 5s
       retries: 5
 
-  # ---------- MinIO 对象存储 ----------
+  # ===========================================
+  # MinIO (Object Storage)
+  # ===========================================
   minio:
     image: minio/minio:latest
     container_name: audiobook-minio
     command: server /data --console-address ":9001"
     environment:
-      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
-      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY:-minioadmin}
     volumes:
-      - ./data/minio:/data
+      - minio-data:/data
     ports:
-      - "9000:9000"   # API 端口
-      - "9001:9001"   # Console 端口
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
     restart: unless-stopped
     networks:
       - audiobook-network
@@ -258,34 +305,20 @@ services:
       timeout: 20s
       retries: 3
 
-  # ---------- 前端 Web 服务 ----------
-  frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-    container_name: audiobook-frontend
-    ports:
-      - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://host.docker.internal:8000
-    depends_on:
-      - backend
-    restart: unless-stopped
-    networks:
-      - audiobook-network
-    profiles:
-      - frontend
-
-# ---------- 网络配置 ----------
+# ===========================================
+# Networks
+# ===========================================
 networks:
   audiobook-network:
     driver: bridge
 
-# ---------- 通用卷 ----------
+# ===========================================
+# Volumes
+# ===========================================
 volumes:
   postgres-data:
-    driver: local
   redis-data:
-    driver: local
   minio-data:
-    driver: local
+  audiobook-media:
+  audiobook-logs:
+  audiobook-books:

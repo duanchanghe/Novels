@@ -21,9 +21,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from sqlalchemy.orm import Session
 from core.database import get_db_context, engine, Base
 from core.config import settings
-from models import Book, Chapter, AudioSegment
-from models.model_book import SourceType, BookStatus
-from models.model_chapter import ChapterStatus
+from core.models import Book, Chapter, AudioSegment
+from core.models.book import SourceType, BookStatus
+from core.models.chapter import ChapterStatus
 from services.svc_epub_parser import EPUBParserService
 from services.svc_text_preprocessor import TextPreprocessorService
 from services.svc_deepseek_analyzer import DeepSeekAnalyzerService

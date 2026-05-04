@@ -13,7 +13,7 @@ from typing import Dict, Any, Optional
 
 from celery import Task
 
-from tasks.celery_app import celery_app
+from tasks.celery_app import app as celery_app
 from core.database import get_db_context
 
 
@@ -52,7 +52,7 @@ def publish_to_channel(
     logger.info(f"开始发布书籍到渠道: book_id={book_id}, channel_id={channel_id}")
 
     # 使用单一数据库会话确保数据一致性
-    from models import Book, PublishChannel, PublishRecord, BookStatus, PublishStatus
+    from core.models import Book, PublishChannel, PublishRecord, BookStatus, PublishStatus
     from services.svc_publisher import PublisherService
     from datetime import datetime
 
@@ -174,7 +174,7 @@ def publish_book_to_all_channels(self, book_id: int) -> Dict[str, Any]:
     logger.info(f"开始发布书籍到所有渠道: {book_id}")
 
     with get_db_context() as db:
-        from models import Book, PublishChannel, BookStatus
+        from core.models import Book, PublishChannel, BookStatus
 
         book = db.query(Book).filter(Book.id == book_id).first()
         if not book:

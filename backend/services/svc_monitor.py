@@ -313,7 +313,7 @@ class MetricsCollector:
                 duration = time.time() - start
 
                 # 获取表统计
-                from models import Book
+                from core.models import Book
                 total_books = db.query(Book).count()
 
                 return {
@@ -374,7 +374,7 @@ class MetricsCollector:
     def collect_task_metrics(self) -> Dict[str, Any]:
         """收集任务队列指标"""
         try:
-            from tasks.celery_app import celery_app
+            from tasks.celery_app import app as celery_app
             from celery.app.control import Inspect
 
             inspector = Inspect()
@@ -452,7 +452,7 @@ class MetricsCollector:
         """收集成本指标"""
         try:
             with get_db_context() as db:
-                from models import Book, Chapter
+                from core.models import Book, Chapter
                 from sqlalchemy import func
 
                 # 统计 DeepSeek Token 消耗
@@ -689,7 +689,7 @@ class MonitoringService:
 # Celery 监控任务
 # ===========================================
 
-from tasks.celery_app import celery_app
+from tasks.celery_app import app as celery_app
 
 
 @celery_app.task(

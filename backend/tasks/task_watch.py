@@ -14,7 +14,7 @@ from typing import Dict, Any, List, Optional
 
 from celery import Task
 
-from tasks.celery_app import celery_app
+from tasks.celery_app import app as celery_app
 from core.config import settings
 from core.database import get_db_context
 
@@ -147,7 +147,7 @@ def _scan_single_directory(watch_dir: str) -> Dict[str, Any]:
     errors = []
 
     with get_db_context() as db:
-        from models import Book, SourceType, BookStatus
+        from core.models import Book, SourceType, BookStatus
 
         try:
             for filename in os.listdir(watch_dir):
@@ -228,7 +228,7 @@ def process_new_epub(self, file_path: str, file_hash: str = None) -> Dict[str, A
     logger.info(f"开始处理新 EPUB 文件: {file_path}")
 
     with get_db_context() as db:
-        from models import Book, SourceType, BookStatus
+        from core.models import Book, SourceType, BookStatus
         from services.svc_epub_parser import EPUBParserService
 
         book = None  # 确保 book 在异常处理块中可见
@@ -317,7 +317,7 @@ def check_watcher_health(self) -> Dict[str, Any]:
     logger.debug("开始检查监听服务健康状态")
 
     with get_db_context() as db:
-        from models import Book, BookStatus, SourceType
+        from core.models import Book, BookStatus, SourceType
         from datetime import datetime, timedelta
 
         try:

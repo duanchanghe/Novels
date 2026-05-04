@@ -35,8 +35,9 @@ from core.constants import (
     EMOTION_PARAM_MAP,
     DEFAULT_EMOTION_CONFIG,
     INTENSITY_FACTOR_MAP,
+    VoiceID,
 )
-from core.exceptions import MiniMaxApiError
+from core.exceptions import MiniMaxAPIError as MiniMaxApiError
 from utils.util_rate_limiter import TokenBucket, RateLimiter
 from utils.util_retry import retry_sync, exponential_backoff
 
@@ -165,6 +166,49 @@ class MiniMaxTTSService:
     # ===========================================
     VOICE_MAP = VOICE_MAP_SIMPLE
 
+    # 角色类型 → 音色映射（用于中文角色名匹配）
+    ROLE_TYPE_VOICE_MAP = {
+        # 男性角色
+        "男主": VoiceID.MALE_QN_QINGSE, "男性主角": VoiceID.MALE_QN_QINGSE,
+        "男": VoiceID.MALE_QN_QINGSE, "男性": VoiceID.MALE_QN_QINGSE,
+        "男性角色": VoiceID.MALE_QN_QINGSE,
+        "male": VoiceID.MALE_QN_QINGSE, "male-young": VoiceID.MALE_QN_QINGSE,
+        "male-adult": VoiceID.MALE_QN_QINGSE,
+        # 旁白
+        "旁白": VoiceID.MALE_QN_QINGSE, "叙述": VoiceID.MALE_QN_QINGSE,
+        "narrator": VoiceID.MALE_QN_QINGSE, "male-narrator": VoiceID.MALE_QN_QINGSE,
+        # 女性角色
+        "女主": VoiceID.FEMALE_SHAON, "女性主角": VoiceID.FEMALE_SHAON,
+        "女": VoiceID.FEMALE_SHAON, "女性": VoiceID.FEMALE_SHAON,
+        "female": VoiceID.FEMALE_SHAON,
+        # 年长男性
+        "老人": VoiceID.MALE_YUN, "老者": VoiceID.MALE_YUN,
+        "师父": VoiceID.MALE_YUN, "师傅": VoiceID.MALE_YUN,
+        "仙尊": VoiceID.MALE_YUNQI, "道祖": VoiceID.MALE_YUNQI,
+        "宗主": VoiceID.MALE_YUNQI, "长老": VoiceID.MALE_YUNQI,
+        "前辈": VoiceID.MALE_QN_QINGSE, "师兄": VoiceID.MALE_QN_QINGSE,
+        "male-elderly": VoiceID.MALE_YUNQI,
+        # 少年男性
+        "少年": VoiceID.MALE_SHAON, "师弟": VoiceID.MALE_SHAON,
+        # 反派男性
+        "反派": VoiceID.MALE_TIAN, "坏人": VoiceID.MALE_TIAN,
+        "boss": VoiceID.MALE_TIAN, "魔王": VoiceID.MALE_TIAN,
+        "male-deep": VoiceID.MALE_TIAN, "male-villain": VoiceID.MALE_TIAN,
+        # 女性角色
+        "少女": VoiceID.FEMALE_SHAON,
+        "female-young": VoiceID.FEMALE_SHAON, "female-adult": VoiceID.FEMALE_SHAON,
+        # 年长女性
+        "老妇": VoiceID.FEMALE_DON, "老奶奶": VoiceID.FEMALE_DON,
+        "female-elderly": VoiceID.FEMALE_DON,
+        # 儿童
+        "儿童": VoiceID.FEMALE_XIANG, "孩童": VoiceID.FEMALE_XIANG,
+        "female-child": VoiceID.FEMALE_XIANG,
+        # 仙侠角色
+        "仙女": VoiceID.FEMALE_TIANMEI, "圣女": VoiceID.FEMALE_TIANMEI,
+        "仙子": VoiceID.FEMALE_TIANMEI, "女帝": VoiceID.FEMALE_TIANMEI,
+        "妖女": VoiceID.FEMALE_TIANMEI, "魔女": VoiceID.FEMALE_TIANMEI,
+    }
+
     # ===========================================
     # 情感参数映射 → 来源 core.constants.EMOTION_PARAM_MAP
     # （TTS 服务扩展了 volume_factor 字段，默认 1.0）
@@ -227,7 +271,7 @@ class MiniMaxTTSService:
             str: MiniMax 音色 ID
         """
         if not voice_id:
-            return "male-qn-qingse"
+            return VoiceID.MALE_QN_QINGSE
 
         # 如果已经是有效的 MiniMax voice_id，直接返回
         voice_values = list(self.VOICE_MAP.values())
@@ -248,8 +292,8 @@ class MiniMaxTTSService:
         if voice_id in self.ROLE_TYPE_VOICE_MAP:
             return self.ROLE_TYPE_VOICE_MAP[voice_id]
 
-        # 默认返回 male-qn-qingse
-        return "male-qn-qingse"
+        # 默认返回清澈男声
+        return VoiceID.MALE_QN_QINGSE
 
     def _get_emotion_params(
         self,
@@ -390,8 +434,8 @@ class MiniMaxTTSService:
                             "pitch": int(float(emotion_params["pitch"]) * 100),
                         },
                         "audio_setting": {
-                            "sample_rate": 32000,
-                            "bitrate": 128000,
+                            "sample_rate": 48000,
+                            "bitrate": 320000,
                             "format": "mp3",
                             "channel": 1,
                         },
@@ -666,52 +710,84 @@ class MiniMaxTTSService:
         """
         return [
             {
-                "id": "male-qn",
+                "id": VoiceID.MALE_QN_QINGSE,
+                "name": "青年男声-清澈",
+                "gender": "male",
+                "age_range": "young",
+                "description": "清澈青年男性音色，适合旁白和男主角",
+                "suitable_roles": ["男主", "旁白", "叙述", "描写"],
+            },
+            {
+                "id": VoiceID.MALE_QN,
                 "name": "青年男声",
                 "gender": "male",
                 "age_range": "young",
-                "description": "标准青年男性音色，适合旁白和男主角",
-                "suitable_roles": ["男主", "旁白", "师兄", "前辈", "掌门"],
+                "description": "标准青年男性音色",
+                "suitable_roles": ["男主", "男性角色"],
             },
             {
-                "id": "male-yun",
-                "name": "成熟男声",
+                "id": VoiceID.MALE_YUN,
+                "name": "沉稳男声",
                 "gender": "male",
                 "age_range": "adult",
-                "description": "成熟稳重的男性音色，适合长辈、师父、仙尊等角色",
+                "description": "成熟稳重的男性音色，适合长辈、师父",
                 "suitable_roles": ["老人", "师父", "仙尊", "宗主", "长老"],
             },
             {
-                "id": "male-tian",
+                "id": VoiceID.MALE_TIAN,
                 "name": "低沉男声",
                 "gender": "male",
                 "age_range": "adult",
-                "description": "低沉有力的男性音色，适合反派、boss等角色",
+                "description": "低沉有力的男性音色，适合反派",
                 "suitable_roles": ["反派", "魔帝", "魔王", "boss"],
             },
             {
-                "id": "female-shaon",
-                "name": "青年女声",
-                "gender": "female",
+                "id": VoiceID.MALE_SHAON,
+                "name": "少年男声",
+                "gender": "male",
                 "age_range": "young",
-                "description": "标准青年女性音色，适合女主角和年轻女性",
-                "suitable_roles": ["女主", "仙女", "圣女", "女帝"],
+                "description": "少年男性音色，适合年轻男性角色",
+                "suitable_roles": ["少年", "年轻男性"],
             },
             {
-                "id": "female-don",
+                "id": VoiceID.FEMALE_SHAON,
+                "name": "少女音",
+                "gender": "female",
+                "age_range": "young",
+                "description": "标准青年女性音色，适合女主角",
+                "suitable_roles": ["女主", "少女", "女性角色"],
+            },
+            {
+                "id": VoiceID.FEMALE_TIANMEI,
+                "name": "甜美女声",
+                "gender": "female",
+                "age_range": "young",
+                "description": "甜美女性音色，适合仙女、女主",
+                "suitable_roles": ["仙女", "圣女", "女帝"],
+            },
+            {
+                "id": VoiceID.FEMALE_DON,
+                "name": "年长女声",
+                "gender": "female",
+                "age_range": "adult",
+                "description": "年长女性音色，适合长辈女性角色",
+                "suitable_roles": ["长辈女性", "老妇"],
+            },
+            {
+                "id": VoiceID.FEMALE_SS,
                 "name": "成熟女声",
                 "gender": "female",
                 "age_range": "adult",
                 "description": "成熟女性音色，适合年长女性角色",
-                "suitable_roles": ["长辈", "师娘", "皇后"],
+                "suitable_roles": ["成熟女性"],
             },
             {
-                "id": "female-xiang",
-                "name": "甜美女声",
+                "id": VoiceID.FEMALE_XIANG,
+                "name": "童声",
                 "gender": "female",
-                "age_range": "young",
-                "description": "甜美可爱的女性音色，适合儿童、少女等角色",
-                "suitable_roles": ["儿童", "少女", "萝莉", "师妹"],
+                "age_range": "child",
+                "description": "童声音色，适合儿童角色",
+                "suitable_roles": ["儿童", "孩童"],
             },
         ]
 

@@ -26,11 +26,38 @@ def atomic():
         yield
 
 
+class DjangoCompatDB:
+    """
+    兼容层：模拟 SQLAlchemy 的 db.session 以支持旧代码
+    
+    Django 使用 Model.objects 而非 db.query()
+    这个类将 db.query(Model) 转换为 Model.objects
+    """
+    
+    def query(self, model):
+        return model.objects
+    
+    def add(self, obj):
+        pass  # Django ORM 不需要
+    
+    def commit(self):
+        pass  # Django ORM 自动提交
+    
+    def refresh(self, obj):
+        obj.refresh_from_db()
+    
+    def close(self):
+        pass
+
+
+_db = DjangoCompatDB()
+
+
+@contextmanager
 def get_db_context():
     """
     Context manager for database sessions.
     
-    In Django, models are accessed directly through their managers.
-    This is kept for backward compatibility with FastAPI code.
+    返回一个兼容对象，支持 db.query(Model) 语法
     """
-    yield None  # Django doesn't need explicit session management
+    yield _db

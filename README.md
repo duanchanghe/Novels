@@ -21,14 +21,14 @@
   - 零人工干预完成率 ≥ 95%
   - 音频采样率 ≥ 44.1kHz，比特率 ≥ 192kbps（CD 级音质）
 - **技术栈**：
-  - **后端**：Python FastAPI + Celery（异步任务队列）
-  - **前端**：Next.js (TypeScript)
+  - **后端**：Python Django + Celery（异步任务队列）
   - **数据库**：PostgreSQL
   - **LLM（角色识别/文本处理）**：DeepSeek API
   - **TTS（语音合成）**：MiniMax TTS API
   - **文件存储**：MinIO（兼容 S3 协议）
   - **消息队列**：Redis
   - **容器化**：Docker + docker-compose
+  - **前端**：已弃用（API 优先设计）
 
 ---
 
@@ -228,14 +228,12 @@
 | **验收标准** | Swagger文档可正常访问 / 所有接口返回正确 |
 | **实现文件** | `backend/api/api_books.py` / `backend/api/api_upload.py` / `backend/api/api_voices.py` / `backend/api/api_watch.py` / `backend/api/api_publish.py` |
 
-#### M12. 前端界面
+#### M12. 前端界面（已弃用）
 | 项目 | 内容 |
 |------|------|
-| **目标** | 用户操作界面 |
-| **交付物** | Next.js应用 |
-| **任务清单** | ✅ 首页 / ✅ 上传页 / ✅ 书籍管理页 / ✅ 听书播放器 / ✅ 下载页 / ✅ 监听状态页 / ✅ 发布管理页 / ✅ 发布历史页 |
-| **验收标准** | 完整用户流程可跑通 |
-| **实现文件** | `frontend/src/app/page.tsx` / `frontend/src/app/books/page.tsx` / `frontend/src/app/books/[id]/page.tsx` / `frontend/src/app/watch/page.tsx` / `frontend/src/app/settings/page.tsx` / `frontend/src/app/publish/history/page.tsx` |
+| **目标** | ~~用户操作界面~~ |
+| **交付物** | ~~Next.js应用~~ |
+| **说明** | 已弃用，采用 API 优先设计 |
 
 ### 3.8 阶段七：全链路串联（M13）✅
 
@@ -1661,6 +1659,9 @@
 > - `@cached` 装饰器自动缓存函数返回值
 > - Redis 不可用时自动降级（跳过缓存）、缓存穿透保护（get_or_set 语义）
 
-> ✅ V1.7.5 配置增强与代码规范：
-> - config.py 配置项整理优化
-> - util_rate_limiter.py 令牌桶限流器完善
+> ✅ V1.7.5 音色映射优化与代码规范（2026-05-05）：
+> - constants.py 音色性别修正：male-villain/male-deep 改用低沉男声、female-child 改用童声、female-elderly/female-old 改用年长女声
+> - VOICE_MAP_SIMPLE 更新：所有音色ID使用 VoiceID 常量，消除硬编码字符串
+> - svc_voice_mapper.py：get_available_voices() 更新为 11 种音色描述，引入 VoiceID 常量
+> - svc_minimax_tts.py：ROLE_TYPE_VOICE_MAP 新增中文角色名映射（仙尊/宗主/长老/仙女/圣女等）、音频质量提升至 48000Hz/320kbps
+> - task_pipeline.py：create_segments 新增性别一致性检查，防止男角色配女音的低级错误

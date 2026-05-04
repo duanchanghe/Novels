@@ -103,11 +103,11 @@ docker-compose logs -f
                             │
           ┌─────────────────┴─────────────────┐
           │                                   │
-          ▼                                   ▼
-┌─────────────────────┐           ┌─────────────────────┐
-│   Next.js Frontend  │           │   FastAPI Backend   │
-│    (Port 3000)     │           │    (Port 8000)     │
-└─────────────────────┘           └──────────┬──────────┘
+          │                                   ▼
+          │              ┌─────────────────────┐
+          │              │   Django Backend   │
+          │              │    (Port 8000)     │
+          │              └──────────┬──────────┘
                                              │
                     ┌──────────────────────┼──────────────────────┐
                     │                      │                      │
@@ -136,8 +136,7 @@ docker-compose logs -f
 
 | 服务 | 端口 | 说明 |
 |------|------|------|
-| backend | 8000 | FastAPI 后端服务 |
-| frontend | 3000 | Next.js 前端 |
+| api | 8000 | Django REST API 后端服务 |
 | celery-worker | - | Celery 异步任务处理 |
 | celery-beat | - | Celery 定时任务调度 |
 | postgres | 5432 | PostgreSQL 数据库 |
@@ -190,19 +189,9 @@ server {
     ssl_certificate /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
 
-    # 前端静态文件
-    location / {
-        proxy_pass http://frontend:3000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-    }
-
     # API 请求
     location /api {
-        proxy_pass http://backend:8000;
+        proxy_pass http://api:8000;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

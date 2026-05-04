@@ -230,7 +230,16 @@ class ProcessingQueue:
 
 # 全局限流器和队列
 _file_lock = FileLock()
-_processing_queue = ProcessingQueue(max_concurrent=settings.WATCH_CONCURRENT)
+_processing_queue = None  # 延迟初始化
+
+
+def get_processing_queue():
+    """获取或初始化处理队列（惰性初始化，避免模块导入时的 settings 加载问题）"""
+    global _processing_queue
+    if _processing_queue is None:
+        from django.conf import settings
+        _processing_queue = ProcessingQueue(max_concurrent=getattr(settings, 'WATCH_CONCURRENT', 3))
+    return _processing_queue
 
 
 class EPUBFileHandler(FileSystemEventHandler):
@@ -415,8 +424,8 @@ class EPUBFileHandler(FileSystemEventHandler):
                 **self.stats,
                 "processing_count": len(self.processing_files),
                 "processed_count": len(self.processed_files),
-                "queue_available": _processing_queue.available,
-                "queue_current": _processing_queue.current,
+                "queue_available": _processing_queue.available if _processing_queue else 0,
+                "queue_current": _processing_queue.current if _processing_queue else 0,
             }
 
 
@@ -559,7 +568,7 @@ class MultiDirectoryWatcher:
 
             # 检查是否已处理
             with get_db_context() as db:
-                from models import Book, BookStatus
+                from core.models import Book, BookStatus
 
                 existing = (
                     db.query(Book)

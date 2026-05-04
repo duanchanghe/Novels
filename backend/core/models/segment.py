@@ -9,10 +9,10 @@ from .chapter import Chapter
 
 class SegmentStatus(models.TextChoices):
     """片段处理状态枚举"""
-    PENDING = "pending", "等待处理"
-    SYNTHESIZING = "synthesizing", "正在合成"
-    SUCCESS = "success", "成功"
-    FAILED = "failed", "失败"
+    PENDING = "PENDING", "等待处理"
+    SYNTHESIZING = "SYNTHESIZING", "正在合成"
+    SUCCESS = "SUCCESS", "成功"
+    FAILED = "FAILED", "失败"
 
 
 class AudioSegment(models.Model):

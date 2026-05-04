@@ -1,13 +1,31 @@
 # ===========================================
-# Config package initialization
+# Configuration Package
 # ===========================================
 
 """
-Configuration module for AI 有声书工坊.
+Configuration package for AI 有声书工坊.
+
+模块化配置设计，支持细粒度的环境变量配置。
 """
 
-# This will make sure the app is always imported when Django starts
-# so that shared_task will use this app.
-from config.celery import app as celery_app
+# Import all config modules for easy access
+from . import celery_config
+from . import storage_config
+from . import ai_config
+from . import watcher_config
+from . import audio_config
 
-__all__ = ("celery_app",)
+# Re-export commonly used settings
+from .celery_config import *
+from .storage_config import *
+from .ai_config import *
+from .watcher_config import *
+from .audio_config import *
+
+__all__ = [
+    "celery_config",
+    "storage_config",
+    "ai_config",
+    "watcher_config",
+    "audio_config",
+]

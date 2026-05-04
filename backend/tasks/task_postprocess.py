@@ -13,7 +13,7 @@ from typing import Dict, Any
 
 from celery import Task
 
-from tasks.celery_app import celery_app
+from tasks.celery_app import app as celery_app
 from core.database import get_db_context
 
 
@@ -53,7 +53,7 @@ def postprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
     logger.info(f"开始后处理章节音频: {chapter_id}")
 
     with get_db_context() as db:
-        from models import Chapter, Book, ChapterStatus, BookStatus, SegmentStatus
+        from core.models import Chapter, Book, ChapterStatus, BookStatus, SegmentStatus
         from datetime import datetime
 
         chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
@@ -131,7 +131,7 @@ def postprocess_book(self, book_id: int) -> Dict[str, Any]:
     logger.info(f"开始后处理书籍音频: {book_id}")
 
     with get_db_context() as db:
-        from models import Chapter, Book, ChapterStatus
+        from core.models import Chapter, Book, ChapterStatus
         from datetime import datetime
 
         book = db.query(Book).filter(Book.id == book_id).first()

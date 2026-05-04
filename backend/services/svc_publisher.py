@@ -365,7 +365,7 @@ class PublisherService:
         Returns:
             dict: 发布结果
         """
-        from models import Book, Chapter, PublishChannel, PublishRecord, ChapterStatus
+        from core.models import Book, Chapter, PublishChannel, PublishRecord, ChapterStatus
 
         retry_count = 0
         last_error = None
@@ -443,7 +443,7 @@ class PublisherService:
         Returns:
             dict: 发布结果
         """
-        from models import Book, Chapter, PublishChannel, PublishRecord, ChapterStatus
+        from core.models import Book, Chapter, PublishChannel, PublishRecord, ChapterStatus
 
         with get_db_context() as db:
             book = db.query(Book).filter(Book.id == book_id).first()
@@ -618,7 +618,7 @@ class PublisherService:
         Returns:
             dict: 发布结果汇总
         """
-        from models import Book, PublishChannel
+        from core.models import Book, PublishChannel
 
         with get_db_context() as db:
             book = db.query(Book).filter(Book.id == book_id).first()
@@ -707,7 +707,7 @@ class PublisherService:
         Returns:
             dict: 发布状态
         """
-        from models import PublishRecord
+        from core.models import PublishRecord
 
         with get_db_context() as db:
             records = (
@@ -762,7 +762,7 @@ class PublisherService:
         Returns:
             bool: 是否取消成功
         """
-        from models import PublishRecord
+        from core.models import PublishRecord
 
         with get_db_context() as db:
             record = (

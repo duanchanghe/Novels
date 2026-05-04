@@ -361,7 +361,7 @@ class FullPipelineIntegrationTest:
 
         try:
             import redis
-            from tasks.celery_app import celery_app
+            from tasks.celery_app import app as celery_app
 
             # 测试 Redis 连接
             redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
@@ -646,7 +646,7 @@ class FullPipelineIntegrationTest:
 
             # 获取可用渠道
             with get_db_context() as db:
-                from models import PublishChannel
+                from core.models import PublishChannel
                 channels = db.query(PublishChannel).filter(
                     PublishChannel.is_enabled == True
                 ).all()
@@ -695,8 +695,8 @@ class FullPipelineIntegrationTest:
 
             # 创建书籍记录
             with get_db_context() as db:
-                from models import Book
-                from models.model_book import SourceType, BookStatus
+                from core.models import Book
+                from core.models.book import SourceType, BookStatus
 
                 # 检查是否已存在
                 existing = db.query(Book).filter(Book.file_hash == file_hash).first()

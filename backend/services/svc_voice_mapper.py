@@ -23,6 +23,7 @@ from core.constants import (
     INTENSITY_FACTOR_MAP,
     DEFAULT_VOICE_CONFIG,
     DEFAULT_EMOTION_CONFIG,
+    VoiceID,
 )
 
 
@@ -159,12 +160,17 @@ class VoiceMapperService:
             list: 音色列表
         """
         return [
-            {"id": "male-qn", "name": "青年男声", "gender": "male", "description": "标准青年男性音色"},
-            {"id": "male-yun", "name": "成熟男声", "gender": "male", "description": "成熟稳重的男性音色"},
-            {"id": "male-tian", "name": "低沉男声", "gender": "male", "description": "低沉有力的男性音色"},
-            {"id": "female-shaon", "name": "青年女声", "gender": "female", "description": "标准青年女性音色"},
-            {"id": "female-don", "name": "成熟女声", "gender": "female", "description": "成熟女性音色"},
-            {"id": "female-xiang", "name": "甜美女声", "gender": "female", "description": "甜美可爱的女性音色"},
+            {"id": VoiceID.MALE_QN_QINGSE, "name": "青年男声-清澈", "gender": "male", "description": "清澈青年男性音色，适合旁白和男主角"},
+            {"id": VoiceID.MALE_QN, "name": "青年男声", "gender": "male", "description": "标准青年男性音色"},
+            {"id": VoiceID.MALE_YUN, "name": "沉稳男声", "gender": "male", "description": "成熟稳重的男性音色，适合长辈、师父"},
+            {"id": VoiceID.MALE_YUNQI, "name": "男声-元气", "gender": "male", "description": "元气男声，适合年轻人"},
+            {"id": VoiceID.MALE_SHAON, "name": "少年男声", "gender": "male", "description": "少年男性音色，适合年轻男性角色"},
+            {"id": VoiceID.MALE_TIAN, "name": "低沉男声", "gender": "male", "description": "低沉有力的男性音色，适合反派角色"},
+            {"id": VoiceID.FEMALE_SHAON, "name": "少女音", "gender": "female", "description": "标准青年女性音色，适合女主角"},
+            {"id": VoiceID.FEMALE_TIANMEI, "name": "甜美女声", "gender": "female", "description": "甜美女性音色，适合仙女、女主"},
+            {"id": VoiceID.FEMALE_SS, "name": "成熟女声", "gender": "female", "description": "成熟女性音色，适合年长女性"},
+            {"id": VoiceID.FEMALE_DON, "name": "年长女声", "gender": "female", "description": "年长女性音色，适合长辈女性角色"},
+            {"id": VoiceID.FEMALE_XIANG, "name": "童声", "gender": "female", "description": "童声音色，适合儿童角色"},
         ]
 
     def get_role_categories(self) -> List[Dict[str, Any]]:

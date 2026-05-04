@@ -14,9 +14,9 @@ from typing import Dict, Any
 from celery import Task
 from celery.exceptions import MaxRetriesExceededError
 
-from tasks.celery_app import celery_app
+from tasks.celery_app import app as celery_app
 from core.database import get_db_context
-from core.exceptions import MiniMaxApiError
+from core.exceptions import MiniMaxAPIError as MiniMaxApiError
 
 
 logger = logging.getLogger("audiobook")
@@ -55,7 +55,7 @@ def synthesize_segment(self, segment_id: int) -> Dict[str, Any]:
     logger.info(f"开始合成音频片段: {segment_id}")
 
     with get_db_context() as db:
-        from models import AudioSegment, SegmentStatus
+        from core.models import AudioSegment, SegmentStatus
 
         segment = db.query(AudioSegment).filter(AudioSegment.id == segment_id).first()
         if not segment:
@@ -137,7 +137,7 @@ def synthesize_chapter(self, chapter_id: int) -> Dict[str, Any]:
     logger.info(f"开始合成章节音频: {chapter_id}")
 
     with get_db_context() as db:
-        from models import Chapter, AudioSegment, Book, ChapterStatus, BookStatus, SegmentStatus
+        from core.models import Chapter, AudioSegment, Book, ChapterStatus, BookStatus, SegmentStatus
 
         chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
         if not chapter:

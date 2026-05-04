@@ -19,9 +19,9 @@ from typing import Dict, List, Any
 from celery import Task
 from celery.exceptions import MaxRetriesExceededError
 
-from tasks.celery_app import celery_app
+from tasks.celery_app import app as celery_app
 from core.database import get_db_context
-from core.exceptions import DeepSeekApiError
+from core.exceptions import DeepSeekAPIError as DeepSeekApiError
 
 
 logger = logging.getLogger("audiobook")
@@ -65,9 +65,9 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
     logger.info(f"开始分析章节: {chapter_id}")
 
     with get_db_context() as db:
-        from models import Chapter, Book
-        from models.model_book import BookStatus
-        from models.model_chapter import ChapterStatus
+        from core.models import Chapter, Book
+        from core.models.book import BookStatus
+        from core.models.chapter import ChapterStatus
 
         # 获取章节
         chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
@@ -140,9 +140,9 @@ def analyze_book(self, book_id: int) -> Dict[str, Any]:
     logger.info(f"开始分析书籍: {book_id}")
 
     with get_db_context() as db:
-        from models import Chapter, Book
-        from models.model_book import BookStatus
-        from models.model_chapter import ChapterStatus
+        from core.models import Chapter, Book
+        from core.models.book import BookStatus
+        from core.models.chapter import ChapterStatus
 
         book = db.query(Book).filter(Book.id == book_id).first()
         if not book:

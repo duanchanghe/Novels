@@ -22,14 +22,15 @@ from enum import Enum
 from celery import Task, chain, group, chord
 from celery.exceptions import MaxRetriesExceededError
 
-from tasks.celery_app import celery_app
+from tasks.celery_app import app as celery_app
 from core.database import get_db_context
-from core.exceptions import (
+from core.domain.exceptions import (
     EPUBParseError,
-    DeepSeekApiError,
-    MiniMaxApiError,
-    AudioProcessingError,
+    DeepSeekAPIError,
+    MiniMaxAPIError,
+    DRMProtectedError,
 )
+from core.constants import VoiceID
 
 
 logger = logging.getLogger("audiobook.pipeline")
@@ -110,9 +111,8 @@ class PipelineTask(Task):
 
     autoretry_for = (
         EPUBParseError,
-        DeepSeekApiError,
-        MiniMaxApiError,
-        AudioProcessingError,
+        DeepSeekAPIError,
+        MiniMaxAPIError,
         ConnectionError,
         TimeoutError,
     )
@@ -141,8 +141,8 @@ def _update_book_progress(book_id: int, message: str = None):
     """更新书籍处理进度"""
     try:
         with get_db_context() as db:
-            from models import Book
-            from models.model_book import BookStatus
+            from core.models import Book
+            from core.models.book import BookStatus
 
             book = db.query(Book).filter(Book.id == book_id).first()
             if book:
@@ -158,8 +158,8 @@ def _update_book_error(book_id: int, error_message: str):
     """更新书籍错误状态"""
     try:
         with get_db_context() as db:
-            from models import Book
-            from models.model_book import BookStatus
+            from core.models import Book
+            from core.models.book import BookStatus
 
             book = db.query(Book).filter(Book.id == book_id).first()
             if book:
@@ -202,9 +202,9 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
     import shutil
 
     with get_db_context() as db:
-        from models import Book, Chapter
-        from models.model_book import BookStatus
-        from models.model_chapter import ChapterStatus
+        from core.models import Book, Chapter
+        from core.models.book import BookStatus
+        from core.models.chapter import ChapterStatus
         from services.svc_epub_parser import EPUBParserService
         from services.svc_chapter_cleaner import clean_chapter_text, clean_chapter_with_report
         from services.svc_minio_storage import get_storage_service
@@ -419,8 +419,8 @@ def preprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
     logger.info(f"[Chapter {chapter_id}] 阶段二：开始预处理")
 
     with get_db_context() as db:
-        from models import Chapter
-        from models.model_chapter import ChapterStatus
+        from core.models import Chapter
+        from core.models.chapter import ChapterStatus
         from services.svc_text_preprocessor import TextPreprocessorService
         from services.svc_minio_storage import get_storage_service
 
@@ -513,9 +513,9 @@ def preprocess_book(self, book_id: int) -> Dict[str, Any]:
     logger.info(f"[Book {book_id}] 批量预处理章节")
 
     with get_db_context() as db:
-        from models import Chapter, Book
-        from models.model_chapter import ChapterStatus
-        from models.model_book import BookStatus
+        from core.models import Chapter, Book
+        from core.models.chapter import ChapterStatus
+        from core.models.book import BookStatus
 
         book = db.query(Book).filter(Book.id == book_id).first()
         if not book:
@@ -571,9 +571,9 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
     logger.info(f"[Chapter {chapter_id}] 阶段三：开始 DeepSeek 分析（从 MinIO 读取文本）")
 
     with get_db_context() as db:
-        from models import Chapter, Book
-        from models.model_chapter import ChapterStatus
-        from models.model_book import BookStatus
+        from core.models import Chapter, Book
+        from core.models.chapter import ChapterStatus
+        from core.models.book import BookStatus
         from services.svc_deepseek_analyzer import DeepSeekAnalyzerService
         from services.svc_minio_storage import get_storage_service
 
@@ -710,9 +710,9 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
     logger.info(f"[Chapter {chapter_id}] 阶段四：创建音频片段")
 
     with get_db_context() as db:
-        from models import Chapter, AudioSegment
-        from models.model_chapter import ChapterStatus
-        from models.model_segment import SegmentStatus, AudioSegment as AudioSegmentModel
+        from core.models import Chapter, AudioSegment
+        from core.models.chapter import ChapterStatus
+        from core.models.segment import SegmentStatus, AudioSegment as AudioSegmentModel
         from services.svc_voice_mapper import VoiceMapperService
 
         chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
@@ -751,11 +751,31 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
             for idx, para in enumerate(paragraphs):
                 # 创建音频片段
                 role = para.get("role", "narrator")
-                gender = para.get("gender", "neutral")
+                speaker = para.get("speaker", "")
 
                 # 获取音色
                 voice_params = voice_mapper.get_voice_for_role(role)
-                voice_id = voice_params.get("voice_id", "female-shaonv")
+                voice_id = voice_params.get("voice_id", VoiceID.MALE_QN_QINGSE)
+
+                # ── 性别一致性检查 ──
+                # 确保未知说话人不会随机分配导致性别错乱
+                # 如果 speaker 是具体名字（而非"旁白"或"narrator"），使用中性音色
+                if speaker and speaker not in ("旁白", "narrator", "未识别", "unknown"):
+                    # 尝试从 role 推断性别
+                    gender = para.get("gender", None)
+                    if not gender:
+                        # 基于 role 推断性别
+                        male_roles = {"男主", "男性", "男", "male", "男性角色", "男性主角", "老人", "老者", "师父", "师傅", "师兄", "师弟", "反派", "坏人", "boss"}
+                        female_roles = {"女主", "女性", "女", "female", "女性角色", "女性主角", "少女", "儿童", "孩童", "仙女", "圣女", "仙子", "妖女", "魔女", "女帝"}
+
+                        if role in male_roles:
+                            gender = "male"
+                        elif role in female_roles:
+                            gender = "female"
+
+                    # 如果无法确定性别，使用清澈男声（默认安全音色）
+                    if not gender or gender not in ("male", "female"):
+                        gender = "male"  # 默认男性音色
 
                 segment = AudioSegmentModel(
                     chapter_id=chapter_id,
@@ -802,7 +822,7 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
     queue="pipeline",
     max_retries=6,
     default_retry_delay=10,       # 首次重试等10秒，后续指数递增
-    autoretry_for=(MiniMaxApiError, ConnectionError, TimeoutError),
+    autoretry_for=(MiniMaxAPIError, ConnectionError, TimeoutError),
     retry_backoff=True,
     retry_backoff_max=120,         # 最大退避120秒
     retry_jitter=True,
@@ -822,9 +842,9 @@ def synthesize_segment(self, segment_id: int) -> Dict[str, Any]:
     logger.info(f"[Segment {segment_id}] 阶段五：开始 TTS 合成")
 
     with get_db_context() as db:
-        from models import AudioSegment, Chapter
-        from models.model_segment import SegmentStatus
-        from models.model_chapter import ChapterStatus
+        from core.models import AudioSegment, Chapter
+        from core.models.segment import SegmentStatus
+        from core.models.chapter import ChapterStatus
         from services.svc_minimax_tts import MiniMaxTTSService
         from services.svc_minio_storage import get_storage_service
 
@@ -940,9 +960,9 @@ def postprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
     logger.info(f"[Chapter {chapter_id}] 阶段六：开始音频后处理")
 
     with get_db_context() as db:
-        from models import Chapter, Book
-        from models.model_chapter import ChapterStatus
-        from models.model_book import BookStatus
+        from core.models import Chapter, Book
+        from core.models.chapter import ChapterStatus
+        from core.models.book import BookStatus
         from services.svc_audio_postprocessor import AudioPostprocessorService
 
         chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
@@ -1025,10 +1045,10 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
     """
     logger.info(f"[Chapter {chapter_id}] === 事件触发：开始逐章处理 ===")
 
-    from models import AudioSegment, Book
-    from models.model_book import BookStatus, GenerationMode
-    from models.model_chapter import ChapterStatus
-    from models.model_segment import SegmentStatus
+    from core.models import AudioSegment, Book
+    from core.models.book import BookStatus, GenerationMode
+    from core.models.chapter import ChapterStatus
+    from core.models.segment import SegmentStatus
 
     try:
         # 阶段三：DeepSeek 分析
@@ -1066,7 +1086,7 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
 
         # ── 根据生成模式决定是否自动触发下一章 ──
         with get_db_context() as db:
-            from models import Chapter
+            from core.models import Chapter
             chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
             if not chapter:
                 return {"chapter_id": chapter_id, "success": True}
@@ -1126,7 +1146,7 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"[Chapter {chapter_id}] 章节处理失败: {e}")
         with get_db_context() as db:
-            from models import Chapter
+            from core.models import Chapter
             chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
             if chapter:
                 retry_count = (chapter.failed_segments or 0) + 1
@@ -1164,9 +1184,9 @@ def _try_publish_book(
         chapter_id: 任意章节 ID（用于反查 book_id）
         force_check: 是否强制检查（章节失败时也检查）
     """
-    from models import Chapter, Book
-    from models.model_chapter import ChapterStatus
-    from models.model_book import BookStatus
+    from core.models import Chapter, Book
+    from core.models.chapter import ChapterStatus
+    from core.models.book import BookStatus
     from sqlalchemy import func
 
     with get_db_context() as db:
@@ -1245,8 +1265,8 @@ def publish_book(self, book_id: int) -> Dict[str, Any]:
     logger.info(f"[Book {book_id}] 阶段七：开始自动发布")
 
     with get_db_context() as db:
-        from models import Book, PublishChannel
-        from models.model_book import BookStatus
+        from core.models import Book, PublishChannel
+        from core.models.book import BookStatus
         from tasks.task_publish import publish_book_to_all_channels
 
         book = db.query(Book).filter(Book.id == book_id).first()
@@ -1331,7 +1351,7 @@ def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
     logger.info(f"[Book {book_id}] 触发有声书生成（事件驱动）")
     logger.info(f"=" * 60)
 
-    from models.model_book import BookStatus
+    from core.models.book import BookStatus
 
     try:
         # 阶段一：EPUB 解析（process_chapter 会在此后自动触发）
@@ -1354,7 +1374,7 @@ def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"[Book {book_id}] 流水线启动失败: {e}")
         with get_db_context() as db:
-            from models import Book
+            from core.models import Book
             book = db.query(Book).filter(Book.id == book_id).first()
             if book:
                 book.status = BookStatus.FAILED
@@ -1435,10 +1455,10 @@ def check_pipeline_status(book_id: int) -> Dict[str, Any]:
         dict: 状态信息
     """
     with get_db_context() as db:
-        from models import Book, Chapter, AudioSegment
-        from models.model_book import BookStatus
-        from models.model_chapter import ChapterStatus
-        from models.model_segment import SegmentStatus
+        from core.models import Book, Chapter, AudioSegment
+        from core.models.book import BookStatus
+        from core.models.chapter import ChapterStatus
+        from core.models.segment import SegmentStatus
         from sqlalchemy import func
 
         book = db.query(Book).filter(Book.id == book_id).first()
@@ -1505,8 +1525,8 @@ def retry_failed_chapters(book_id: int) -> Dict[str, Any]:
     logger.info(f"[Book {book_id}] 重试失败的章节")
 
     with get_db_context() as db:
-        from models import Chapter
-        from models.model_chapter import ChapterStatus
+        from core.models import Chapter
+        from core.models.chapter import ChapterStatus
 
         failed_chapters = (
             db.query(Chapter)
@@ -1557,7 +1577,7 @@ def get_pipeline_history(
     """
     # 从 Celery Result Backend 获取历史
     # 这里简化处理，实际项目中应该使用专门的数据库表存储历史
-    from tasks.celery_app import celery_app
+    from tasks.celery_app import app as celery_app
 
     history = []
 
@@ -1611,8 +1631,8 @@ def cancel_pipeline(book_id: int) -> Dict[str, Any]:
     Returns:
         dict: 取消结果
     """
-    from models import Book
-    from models.model_book import BookStatus
+    from core.models import Book
+    from core.models.book import BookStatus
 
     logger.info(f"[Book {book_id}] 尝试取消流水线执行")
 
