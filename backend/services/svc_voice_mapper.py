@@ -52,6 +52,111 @@ class VoiceMapperService:
         """
         return self.role_map.get(role, DEFAULT_VOICE_CONFIG)
 
+    def get_voice_for_speaker(self, speaker: str) -> Dict[str, Any]:
+        """
+        根据说话人名称智能获取音色配置
+
+        支持多种匹配策略：
+        1. 精确匹配 ROLE_VOICE_MAP（如"旁白"、"男主"、"仙尊"）
+        2. 通过常见称呼推断（如"公子"→男声、"小姐"→女声）
+        3. 通过姓氏+称谓推断
+        4. 默认映射到通用男声
+
+        Args:
+            speaker: 说话人名称（如"张三"、"旁白"、"林公子"）
+
+        Returns:
+            dict: 包含 voice_id/speed/pitch/emotion 的配置
+        """
+        if not speaker:
+            return DEFAULT_VOICE_CONFIG
+
+        # 策略1：精确匹配
+        if speaker in self.role_map:
+            return self.role_map[speaker]
+
+        # 策略2：别名映射（检查角色映射表中的值）
+        for canonical_name, config in self.role_map.items():
+            if speaker.startswith(canonical_name) or canonical_name.startswith(speaker):
+                return config
+
+        # 策略3：通过关键词推断角色类型
+        speaker_lower = speaker.lower()
+
+        # 女性关键词
+        female_keywords = [
+            "女", "姐", "妹", "娘", "妈", "母", "太", "婆", "姑", "婶",
+            "小姐", "夫人", "太太", "奶奶", "公主", "王妃", "皇后",
+            "仙女", "圣女", "仙子", "妖女", "魔女", "女帝", "帝女",
+            "女儿", "孙女", "女友", "girl", "woman", "female",
+        ]
+        # 男性关键词
+        male_keywords = [
+            "男", "哥", "弟", "爷", "爹", "父", "叔", "伯", "舅", "姑父",
+            "公子", "少爷", "老爷", "先生", "陛下", "皇上",
+            "仙尊", "魔尊", "帝君", "宗主", "掌门", "长老", "前辈",
+            "师父", "师傅", "师尊", "师兄", "师弟", "徒弟",
+            "儿子", "孙子", "男友", "boy", "man", "male",
+        ]
+        # 年长关键词
+        elder_keywords = ["老", "祖", "爷", "奶", "婆", "翁", "叟", "long"]
+        # 年幼关键词
+        child_keywords = ["小", "童", "儿", "孩", "baby", "child", "kid"]
+
+        # 先判断性别倾向
+        is_female = any(kw in speaker for kw in female_keywords)
+        is_male = any(kw in speaker for kw in male_keywords)
+        is_elder = any(kw in speaker for kw in elder_keywords)
+        is_child = any(kw in speaker for kw in child_keywords)
+
+        # 如果同时匹配男性和女性关键词（如"小公主"→女性优先）
+        if is_female and is_male:
+            is_male = False
+
+        # 策略4：通过角色类型选择音色
+        if is_female:
+            if is_child:
+                return self.role_map.get("孩童", self.role_map.get("少女", DEFAULT_VOICE_CONFIG))
+            elif is_elder:
+                return self.role_map.get("老妇", self.role_map.get("female-elderly", DEFAULT_VOICE_CONFIG))
+            else:
+                return self.role_map.get("女主", self.role_map.get("female", DEFAULT_VOICE_CONFIG))
+        elif is_male:
+            if is_child:
+                return self.role_map.get("少年", self.role_map.get("male-young", DEFAULT_VOICE_CONFIG))
+            elif is_elder:
+                return self.role_map.get("老人", self.role_map.get("male-elderly", DEFAULT_VOICE_CONFIG))
+            else:
+                return self.role_map.get("男主", self.role_map.get("male", DEFAULT_VOICE_CONFIG))
+
+        # 策略5：通过常见姓氏推断（姓氏后加"某"可能是角色名）
+        common_surnames = {
+            "张", "李", "王", "赵", "刘", "陈", "杨", "周", "吴", "郑",
+            "孙", "马", "朱", "胡", "郭", "何", "高", "林", "罗", "梁",
+            "宋", "谢", "韩", "唐", "冯", "于", "董", "萧", "程", "曹",
+            "袁", "邓", "许", "傅", "沈", "曾", "彭", "吕", "苏", "卢",
+            "蒋", "蔡", "贾", "丁", "魏", "薛", "叶", "阎", "余", "潘",
+            "杜", "戴", "夏", "钟", "汪", "田", "任", "姜", "范", "方",
+            "石", "姚", "谭", "廖", "邹", "熊", "金", "陆", "郝", "孔",
+            "白", "崔", "康", "毛", "邱", "秦", "江", "史", "顾", "侯",
+            "邵", "孟", "龙", "万", "段", "雷", "钱", "汤", "尹", "黎",
+            "易", "常", "武", "乔", "贺", "赖", "龚", "文",
+        }
+
+        if len(speaker) >= 2 and speaker[0] in common_surnames:
+            # 姓氏开头 → 很可能是具体角色名，用通用男声（小说男主为主）
+            return self.role_map.get("男主", DEFAULT_VOICE_CONFIG)
+
+        # 策略6：英文角色名检查
+        if speaker_lower in ("narrator", "narration", "description"):
+            return self.role_map.get("narrator", DEFAULT_VOICE_CONFIG)
+
+        # 策略7：长度判断——2字及以上无名角色默认男主
+        if len(speaker) >= 2:
+            return self.role_map.get("男主", DEFAULT_VOICE_CONFIG)
+
+        return DEFAULT_VOICE_CONFIG
+
     def get_emotion_params(self, emotion: str) -> Dict[str, Any]:
         """
         获取情感参数（支持强度细分）

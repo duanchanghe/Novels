@@ -27,6 +27,7 @@ from .books import (
     BookDownloadView,
     BookSubtitleView,
     BookDeleteView,
+    BookStopAllView,
 )
 from .chapters import (
     ChapterDetailView,
@@ -71,6 +72,7 @@ __all__ = [
     "BookAudioView",
     "BookDownloadView",
     "BookDeleteView",
+    "BookStopAllView",
     # Chapters
     "ChapterDetailView",
     "ChapterConfirmView",

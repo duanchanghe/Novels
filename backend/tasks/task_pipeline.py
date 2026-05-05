@@ -40,7 +40,8 @@ class PipelineStage(str, Enum):
     """流水线阶段枚举"""
     PARSING = "parsing"              # EPUB 解析
     PREPROCESSING = "preprocessing"  # 文本预处理
-    ANALYZING = "analyzing"          # DeepSeek 分析
+    ANALYZING = "analyzing"          # DeepSeek 分析（全部分析）
+    CHARACTER_MAPPING = "character_mapping"  # 角色统一 + 音色映射
     CREATING_SEGMENTS = "creating_segments"  # 创建音频片段
     SYNTHESIZING = "synthesizing"    # TTS 合成
     POSTPROCESSING = "postprocessing"  # 音频后处理
@@ -154,6 +155,128 @@ def _update_book_progress(book_id: int, message: str = None):
         logger.error(f"更新书籍进度失败: {e}")
 
 
+def _ensure_paragraphs(chapter, paragraphs: List) -> List:
+    """
+    确保章节有段落数据：优先使用分析结果，否则从清洗文本拆分。
+
+    Args:
+        chapter: Chapter 对象
+        paragraphs: 已有段落列表（可能为空）
+
+    Returns:
+        list: 确保非空的段落列表
+    """
+    if paragraphs:
+        return paragraphs
+
+    chapter_id = chapter.id
+    chapter_index = chapter.chapter_index
+    book_id = chapter.book_id
+    logger.warning(f"[Chapter {chapter_id}] 分析结果无段落，从清洗文本拆分")
+
+    full_text = ""
+    if chapter.cleaned_text and isinstance(chapter.cleaned_text, str) and chapter.cleaned_text.startswith("chapters/"):
+        try:
+            from services.svc_minio_storage import get_storage_service
+            storage = get_storage_service()
+            full_text = storage.download_chapter_text(
+                book_id=book_id, chapter_index=chapter_index,
+            )
+        except Exception as e:
+            logger.warning(f"[Chapter {chapter_id}] MinIO 读取失败: {e}")
+    if not full_text:
+        full_text = chapter.cleaned_text or chapter.raw_text or ""
+        if isinstance(full_text, str) and full_text.startswith("chapters/"):
+            full_text = ""
+
+    if full_text and len(full_text.strip()) > 10:
+        import re
+        sentences = re.split(r'(?<=[。！？！\.\!\?\n])', full_text)
+        sentences = [s.strip() for s in sentences if s.strip()]
+        merged = []
+        for s in sentences:
+            if merged and len(s) < 15:
+                merged[-1] = merged[-1] + s
+            else:
+                merged.append(s)
+        paragraphs = [
+            {"text": s, "speaker": "旁白", "emotion": "neutral"}
+            for s in merged if len(s) > 5
+        ]
+        logger.info(f"[Chapter {chapter_id}] 从清洗文本拆分了 {len(paragraphs)} 个段落")
+    else:
+        paragraphs = [{"text": "本章内容暂时无法处理", "speaker": "旁白", "emotion": "neutral"}]
+
+    return paragraphs
+
+
+def _trigger_next_chapter(chapter_id: int) -> None:
+    """
+    触发下一章处理（支持手动/自动模式）
+
+    Args:
+        chapter_id: 当前已完成章节 ID
+    """
+    from core.models import Chapter, Book
+    from core.models.chapter import ChapterStatus
+    from core.models.book import GenerationMode
+
+    with get_db_context() as db:
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
+        if not chapter:
+            return
+
+        # 当前章标记完成
+        chapter.status = ChapterStatus.DONE
+        db.commit()
+
+        # 更新书籍进度
+        book = db.query(Book).filter(id=chapter.book_id).first()
+        if book:
+            book.processed_chapters = (
+                db.query(Chapter)
+                .filter(book_id=book.id)
+                .filter(status=ChapterStatus.DONE)
+                .count()
+            )
+            book.save()
+
+        # 找下一章
+        next_chapter = (
+            db.query(Chapter)
+            .filter(book_id=chapter.book_id)
+            .filter(status=ChapterStatus.ANALYZED)
+            .filter(chapter_index > chapter.chapter_index)
+            .order_by("chapter_index")
+            .first()
+        )
+
+        if not next_chapter:
+            logger.info(f"[Book {chapter.book_id}] ✅ 所有章节音频生成完成！")
+            _try_publish_book(chapter_id)
+            return
+
+        generation_mode = getattr(book, 'generation_mode', None) if book else None
+        is_manual = (
+            generation_mode == GenerationMode.MANUAL.value
+            or generation_mode == GenerationMode.MANUAL
+        )
+
+        if is_manual:
+            next_chapter.status = ChapterStatus.AWAITING_CONFIRM
+            db.commit()
+            logger.info(
+                f"[Book {chapter.book_id}] 第 {chapter.chapter_index} 章完成（手动模式），"
+                f"第 {next_chapter.chapter_index} 章等待确认"
+            )
+        else:
+            logger.info(
+                f"[Book {chapter.book_id}] 第 {chapter.chapter_index} 章完成，"
+                f"自动触发第 {next_chapter.chapter_index} 章"
+            )
+            generate_chapter_audio.delay(next_chapter.id)
+
+
 def _update_book_error(book_id: int, error_message: str):
     """更新书籍错误状态"""
     try:
@@ -246,6 +369,9 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
                             f"[Chapter {ch.id}] MinIO 上传失败: {e}"
                         )
             db.commit()
+
+            # 已有章节 → 直接进入全部分析阶段
+            analyze_all_chapters.delay(book_id)
 
             return {
                 "book_id": book_id,
@@ -366,13 +492,13 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
                 f"去除 {total_removed_chars} 非正文字符"
             )
 
-            # ── 事件驱动：清洗文本就绪 → 触发逐章处理 ──
+            # ── 新流程：先全部分析 → 统一角色 → 匹配音色 → 再逐章生成 ──
             logger.info(
-                f"[Book {book_id}] 清洗文本已就绪，"
-                f"触发 {len(chapter_ids)} 章逐章处理..."
+                f"[Book {book_id}] 解析完成 ({len(chapter_ids)} 章)，"
+                f"开始全部分析阶段..."
             )
-            for ch_id in chapter_ids:
-                process_chapter.delay(ch_id)
+            # 触发全部分析任务（不再逐章触发 process_chapter）
+            analyze_all_chapters.delay(book_id)
 
             return {
                 "book_id": book_id,
@@ -647,10 +773,34 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
                     "success": True,
                 }
 
-            # 执行分析
+            # ── 收集已分析章节的角色信息，作为当前章节的已知角色 ──
+            role_list = None
+            analyzed_chapters = (
+                db.query(Chapter)
+                .filter(book_id=chapter.book_id)
+                .filter(status=ChapterStatus.ANALYZED)
+                .filter(Chapter.id != chapter_id)
+                .order_by("chapter_index")
+                .all()
+            )
+            if analyzed_chapters:
+                known_characters = set()
+                for ac in analyzed_chapters:
+                    ac_result = ac.analysis_result or {}
+                    for char in ac_result.get("characters", []):
+                        name = char.get("name", "")
+                        if name and name not in ("旁白", "narrator", "未识别", "未知"):
+                            known_characters.add(name)
+                if known_characters:
+                    role_list = list(known_characters)
+                    logger.info(
+                        f"[Chapter {chapter_id}] 从已分析章节继承角色列表: {role_list}"
+                    )
+
+            # 执行分析（传递已知角色列表，帮助 DeepSeek 保持角色一致性）
             logger.info(f"[Chapter {chapter_id}] 开始调用 DeepSeek 分析器，文本长度: {len(text)}")
             analyzer = DeepSeekAnalyzerService()
-            result = analyzer.analyze_chapter(text)
+            result = analyzer.analyze_chapter(text, role_list=role_list)
             logger.info(f"[Chapter {chapter_id}] DeepSeek 分析返回: 段落={len(result.get('paragraphs',[]))}, 角色={len(result.get('characters',[]))}")
 
             # 更新章节
@@ -716,6 +866,7 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
         from core.models.chapter import ChapterStatus
         from core.models.segment import SegmentStatus, AudioSegment as AudioSegmentModel
         from services.svc_voice_mapper import VoiceMapperService
+        from services.svc_minio_storage import get_storage_service
 
         chapter = db.query(Chapter).filter(id=chapter_id).first()
         if not chapter:
@@ -725,111 +876,52 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
             analysis = chapter.analysis_result or {}
             paragraphs = analysis.get("paragraphs", [])
 
-            # 调试日志
             logger.info(f"[Chapter {chapter_id}] 分析结果包含 {len(paragraphs)} 个段落")
-            if paragraphs and len(paragraphs) > 0:
-                logger.info(f"[Chapter {chapter_id}] 第一个段落示例: {paragraphs[0] if paragraphs else 'N/A'}")
 
-            # 如果没有段落，尝试从完整清洗文本生成段落
-            if not paragraphs:
-                logger.warning(f"[Chapter {chapter_id}] 分析结果中没有段落，尝试从完整文本拆分")
-                full_text = ""
-                # 优先从 MinIO 获取完整清洗文本
-                if chapter.cleaned_text and chapter.cleaned_text.startswith("chapters/"):
-                    try:
-                        from services.svc_minio_storage import get_storage_service
-                        storage = get_storage_service()
-                        full_text = storage.download_chapter_text(
-                            book_id=chapter.book_id,
-                            chapter_index=chapter.chapter_index,
-                        )
-                    except Exception as e:
-                        logger.warning(f"[Chapter {chapter_id}] MinIO 读取失败: {e}")
-                # 回退到 DB 中的文本
-                if not full_text:
-                    full_text = chapter.cleaned_text or chapter.raw_text or ""
-                    if isinstance(full_text, str) and full_text.startswith("chapters/"):
-                        full_text = ""  # 还是路径，跳过
-                # 按句子边界拆分（中文标点）
-                if full_text and len(full_text.strip()) > 10:
-                    import re
-                    sentences = re.split(r'(?<=[。！？！\.\!\?\n])', full_text)
-                    sentences = [s.strip() for s in sentences if s.strip()]
-                    # 合并过短的句子（少于15字）到前一句
-                    merged = []
-                    for s in sentences:
-                        if merged and len(s) < 15:
-                            merged[-1] = merged[-1] + s
-                        else:
-                            merged.append(s)
-                    paragraphs = [
-                        {
-                            "text": s,
-                            "role": "narrator",
-                            "emotion": "neutral",
-                            "speaker": "旁白"
-                        }
-                        for s in merged if len(s) > 5
-                    ]
-                    logger.info(f"[Chapter {chapter_id}] 从清洗文本拆分了 {len(paragraphs)} 个段落")
-                else:
-                    logger.warning(f"[Chapter {chapter_id}] 无有效文本，创建1个占位段落")
-                    paragraphs = [
-                        {
-                            "text": "本章内容暂时无法处理",
-                            "role": "narrator",
-                            "emotion": "neutral",
-                            "speaker": "旁白"
-                        }
-                    ]
+            # 如果没有段落，尝试从完整清洗文本生成
+            paragraphs = _ensure_paragraphs(chapter, paragraphs)
 
-            # 声音映射器
+            # 读取 MinIO 统一角色-音色映射（新流程生成）
+            storage = get_storage_service()
+            mapping_data = storage.download_voice_mapping(chapter.book_id)
+            voice_mapping = mapping_data.get("voice_mapping", {})
+
+            # 声音映射器（作为兜底）
             voice_mapper = VoiceMapperService()
+
+            # 构建说话人→音色缓存（统一映射优先，智能推断兜底）
+            speaker_cache = {}
+            for para in paragraphs:
+                speaker = para.get("speaker", "") or para.get("role", "旁白")
+                if speaker and speaker not in speaker_cache:
+                    if speaker in voice_mapping:
+                        speaker_cache[speaker] = voice_mapping[speaker]
+                    else:
+                        speaker_cache[speaker] = voice_mapper.get_voice_for_speaker(speaker)
 
             segments_created = 0
             for idx, para in enumerate(paragraphs):
-                # 创建音频片段
-                role = para.get("role", "narrator")
-                speaker = para.get("speaker", "")
+                speaker = para.get("speaker", "") or para.get("role", "旁白")
+                vc = speaker_cache.get(speaker, voice_mapper.get_voice_for_speaker(speaker))
 
-                # 获取音色
-                voice_params = voice_mapper.get_voice_for_role(role)
-                voice_id = voice_params.get("voice_id", VoiceID.MALE_QN_QINGSE)
-
-                # ── 性别一致性检查 ──
-                # 确保未知说话人不会随机分配导致性别错乱
-                # 如果 speaker 是具体名字（而非"旁白"或"narrator"），使用中性音色
-                if speaker and speaker not in ("旁白", "narrator", "未识别", "unknown"):
-                    # 尝试从 role 推断性别
-                    gender = para.get("gender", None)
-                    if not gender:
-                        # 基于 role 推断性别
-                        male_roles = {"男主", "男性", "男", "male", "男性角色", "男性主角", "老人", "老者", "师父", "师傅", "师兄", "师弟", "反派", "坏人", "boss"}
-                        female_roles = {"女主", "女性", "女", "female", "女性角色", "女性主角", "少女", "儿童", "孩童", "仙女", "圣女", "仙子", "妖女", "魔女", "女帝"}
-
-                        if role in male_roles:
-                            gender = "male"
-                        elif role in female_roles:
-                            gender = "female"
-
-                    # 如果无法确定性别，使用清澈男声（默认安全音色）
-                    if not gender or gender not in ("male", "female"):
-                        gender = "male"  # 默认男性音色
+                if speaker not in ("旁白", "narrator", "未识别", "unknown"):
+                    logger.debug(
+                        f"[Chapter {chapter_id}] 角色 '{speaker}' → 音色 {vc.get('voice_id', '?')}"
+                    )
 
                 segment = AudioSegmentModel(
                     chapter_id=chapter_id,
                     segment_index=idx,
                     text_content=para.get("text", ""),
-                    role=role,
+                    role=speaker,
                     emotion=para.get("emotion", "neutral"),
-                    voice_id=voice_id,
-                    speed=para.get("speed", 1.0),
+                    voice_id=vc.get("voice_id", VoiceID.MALE_QN_QINGSE),
+                    speed=vc.get("speed", 1.0),
                     status=SegmentStatus.PENDING,
                 )
                 db.add(segment)
                 segments_created += 1
 
-            # 更新章节统计
             chapter.total_segments = segments_created
             chapter.status = ChapterStatus.ANALYZED
             chapter.updated_at = datetime.utcnow()
@@ -1122,67 +1214,10 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
         logger.info(f"[Chapter {chapter_id}] 阶段六：音频后处理")
         postprocess_chapter(chapter_id)
 
-        # ── 检查是否所有章节都完成 → 触发发布 ──
-        _try_publish_book(chapter_id)
+        # ── 触发下一章（支持手动/自动模式，共享 _trigger_next_chapter） ──
+        _trigger_next_chapter(chapter_id)
 
-        # ── 根据生成模式决定是否自动触发下一章 ──
-        with get_db_context() as db:
-            from core.models import Chapter
-            chapter = db.query(Chapter).filter(id=chapter_id).first()
-            if not chapter:
-                return {"chapter_id": chapter_id, "success": True}
-
-            book = db.query(Book).filter(id=chapter.book_id).first()
-            next_chapter = (
-                db.query(Chapter)
-                .filter(book_id=chapter.book_id)
-                .filter(chapter_index=chapter.chapter_index + 1)
-                .first()
-            )
-
-            if not next_chapter:
-                # 没有下一章 → 标记当前章完成
-                chapter.status = ChapterStatus.DONE
-                db.commit()
-                logger.info(f"[Chapter {chapter_id}] ✅ 章节全部处理完成")
-                return {"chapter_id": chapter_id, "success": True}
-
-            # 将 generation_mode 转换为字符串进行安全比较
-            # model_book.py 中 generation_mode 是 String(20) 类型
-            generation_mode = getattr(book, 'generation_mode', None)
-            is_manual = generation_mode == GenerationMode.MANUAL.value or generation_mode == GenerationMode.MANUAL
-
-            if book and is_manual:
-                # ── 手动模式：暂停，等待用户确认 ──
-                chapter.status = ChapterStatus.DONE
-                # 将下一章标记为等待确认
-                next_chapter.status = ChapterStatus.AWAITING_CONFIRM
-                db.commit()
-                logger.info(
-                    f"[Chapter {chapter_id}] ⏸ 手动模式：第 {chapter.chapter_index} 章完成，"
-                    f"第 {next_chapter.chapter_index} 章等待确认"
-                )
-                return {
-                    "chapter_id": chapter_id,
-                    "success": True,
-                    "mode": "manual",
-                    "next_chapter_id": next_chapter.id,
-                }
-            else:
-                # ── 自动模式：自动触发下一章 ──
-                chapter.status = ChapterStatus.DONE
-                db.commit()
-                process_chapter.delay(next_chapter.id)
-                logger.info(
-                    f"[Chapter {chapter_id}] ✅ 自动模式：第 {chapter.chapter_index} 章完成，"
-                    f"自动触发第 {next_chapter.chapter_index} 章"
-                )
-                return {
-                    "chapter_id": chapter_id,
-                    "success": True,
-                    "mode": "auto",
-                    "next_chapter_id": next_chapter.id,
-                }
+        return {"chapter_id": chapter_id, "success": True}
 
     except Exception as e:
         logger.error(f"[Chapter {chapter_id}] 章节处理失败: {e}")
@@ -1451,6 +1486,415 @@ def generate_audiobook_simple(self, book_id: int) -> Dict[str, Any]:
         dict: 执行结果
     """
     return generate_audiobook(book_id)
+
+
+# ===========================================
+# 新流程：全部分析 → 统一角色 → 匹配音色 → 逐章生成
+# ===========================================
+
+@celery_app.task(
+    bind=True,
+    base=PipelineTask,
+    name="tasks.task_pipeline.analyze_all_chapters",
+    queue="pipeline",
+    max_retries=1,
+)
+def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
+    """
+    分析书籍所有章节（阶段三：全部分析）
+
+    一次性对所有未分析的章节执行 DeepSeek 分析，
+    所有章节分析完成后自动触发角色统一和音色匹配。
+
+    Args:
+        book_id: 书籍ID
+
+    Returns:
+        dict: 分析结果汇总
+    """
+    logger.info(f"[Book {book_id}] ========== 开始全部分析阶段 ==========")
+
+    with get_db_context() as db:
+        from core.models import Book, Chapter
+        from core.models.book import BookStatus
+        from core.models.chapter import ChapterStatus
+        from services.svc_deepseek_analyzer import DeepSeekAnalyzerService
+        from services.svc_minio_storage import get_storage_service
+
+        book = db.query(Book).filter(id=book_id).first()
+        if not book:
+            return {"success": False, "message": "书籍不存在"}
+
+        # 获取所有待分析的章节
+        chapters = (
+            db.query(Chapter)
+            .filter(book_id=book_id)
+            .filter(Chapter.status.in_([
+                ChapterStatus.PENDING,
+                ChapterStatus.AWAITING_CONFIRM,
+            ]))
+            .order_by("chapter_index")
+            .all()
+        )
+
+        if not chapters:
+            # 所有章节可能已分析过，直接进入角色映射
+            logger.info(f"[Book {book_id}] 没有待分析的章节，直接进入角色映射")
+            unify_and_map_characters.delay(book_id)
+            return {
+                "book_id": book_id,
+                "analyzed": 0,
+                "total": 0,
+                "stage": PipelineStage.ANALYZING.value,
+                "success": True,
+            }
+
+        total = len(chapters)
+        logger.info(f"[Book {book_id}] 共 {total} 章待分析")
+
+        # 更新书籍状态
+        book.status = BookStatus.ANALYZING
+        db.commit()
+
+        # 逐章分析（串行，避免并发调用 DeepSeek API 触发限流）
+        analyzer = DeepSeekAnalyzerService()
+        storage = get_storage_service()
+        analyzed_count = 0
+        failed_count = 0
+        collected_characters = {}  # name -> { aliases, emotions, chapter_indices }
+
+        for chapter in chapters:
+            try:
+                # 更新章节状态
+                chapter.status = ChapterStatus.ANALYZING
+                db.commit()
+
+                # 读取章节文本
+                text = ""
+                if chapter.cleaned_text and chapter.cleaned_text.startswith("chapters/"):
+                    try:
+                        text = storage.download_chapter_text(
+                            book_id=chapter.book_id,
+                            chapter_index=chapter.chapter_index,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[Chapter {chapter.id}] MinIO 读取失败: {e}")
+
+                if not text and chapter.cleaned_text:
+                    if not chapter.cleaned_text.startswith("chapters/"):
+                        text = chapter.cleaned_text
+                if not text and chapter.raw_text:
+                    text = chapter.raw_text
+
+                if not text or len(text.strip()) < 10:
+                    logger.warning(f"[Chapter {chapter.id}] 文本过短，跳过分析")
+                    chapter.status = ChapterStatus.ANALYZED
+                    chapter.analysis_result = {"paragraphs": [], "characters": []}
+                    db.commit()
+                    analyzed_count += 1
+                    continue
+
+                # 收集前面已分析章节的角色名作为已知角色列表
+                role_list = list(collected_characters.keys()) if collected_characters else None
+
+                # 调用 DeepSeek 分析
+                logger.info(
+                    f"[Book {book_id}] 分析第 {chapter.chapter_index}/{total} 章 "
+                    f"'{chapter.title}' ({len(text)} 字符)"
+                )
+                result = analyzer.analyze_chapter(text, role_list=role_list)
+
+                # 收集角色信息
+                for char in result.get("characters", []):
+                    name = char.get("name", "")
+                    if name and name not in ("旁白", "narrator", "未识别", "未知"):
+                        if name not in collected_characters:
+                            collected_characters[name] = {
+                                "name": name,
+                                "aliases": set(),
+                                "emotions": set(),
+                                "chapters": [],
+                                "dialogue_count": 0,
+                            }
+                        cc = collected_characters[name]
+                        for alias in char.get("aliases", []):
+                            cc["aliases"].add(alias)
+                        for emotion in char.get("emotions", []):
+                            cc["emotions"].add(emotion)
+                        cc["chapters"].append(chapter.chapter_index)
+                        cc["dialogue_count"] += char.get("dialogue_count", 0)
+
+                # 保存分析结果
+                chapter.analysis_result = result
+                chapter.characters = result.get("characters", [])
+                chapter.status = ChapterStatus.ANALYZED
+                chapter.updated_at = datetime.utcnow()
+
+                if result.get("token_usage"):
+                    chapter.deepseek_tokens = result["token_usage"]
+                if result.get("processed_text"):
+                    chapter.minimax_characters = len(result["processed_text"])
+
+                db.commit()
+                analyzed_count += 1
+                logger.info(
+                    f"[Book {book_id}] 第 {chapter.chapter_index} 章分析完成, "
+                    f"已识别 {len(collected_characters)} 个角色"
+                )
+
+            except Exception as e:
+                logger.error(f"[Chapter {chapter.id}] 分析失败: {e}")
+                chapter.status = ChapterStatus.FAILED
+                chapter.error_message = str(e)
+                db.commit()
+                failed_count += 1
+
+        logger.info(
+            f"[Book {book_id}] 全部分析完成: "
+            f"成功 {analyzed_count}, 失败 {failed_count}, "
+            f"共识别 {len(collected_characters)} 个角色"
+        )
+
+        # 触发角色统一和音色匹配
+        unify_and_map_characters.delay(book_id)
+
+        return {
+            "book_id": book_id,
+            "analyzed": analyzed_count,
+            "failed": failed_count,
+            "total": total,
+            "characters_found": len(collected_characters),
+            "character_names": list(collected_characters.keys()),
+            "stage": PipelineStage.ANALYZING.value,
+            "success": True,
+        }
+
+
+@celery_app.task(
+    bind=True,
+    base=PipelineTask,
+    name="tasks.task_pipeline.unify_and_map_characters",
+    queue="pipeline",
+    max_retries=1,
+)
+def unify_and_map_characters(self, book_id: int) -> Dict[str, Any]:
+    """
+    统一角色 + 匹配音色（阶段：角色映射）
+
+    1. 收集所有已分析章节的角色信息
+    2. 合并别名（如"张兄"→"张三"）
+    3. 为每个角色匹配 TTS 音色
+    4. 保存角色-音色映射到 MinIO
+    5. 触发逐章音频生成
+
+    Args:
+        book_id: 书籍ID
+
+    Returns:
+        dict: 映射结果
+    """
+    logger.info(f"[Book {book_id}] ========== 开始角色统一和音色匹配 ==========")
+
+    with get_db_context() as db:
+        from core.models import Book, Chapter
+        from core.models.book import BookStatus
+        from core.models.chapter import ChapterStatus
+        from services.svc_voice_mapper import VoiceMapperService
+        from services.svc_minio_storage import get_storage_service
+
+        book = db.query(Book).filter(id=book_id).first()
+        if not book:
+            return {"success": False, "message": "书籍不存在"}
+
+        # 收集所有已分析章节的角色
+        analyzed_chapters = (
+            db.query(Chapter)
+            .filter(book_id=book_id)
+            .filter(status=ChapterStatus.ANALYZED)
+            .order_by("chapter_index")
+            .all()
+        )
+
+        # 汇总所有角色
+        all_characters = {}  # name -> combined info
+        for chapter in analyzed_chapters:
+            ac_result = chapter.analysis_result or {}
+            for char in ac_result.get("characters", []):
+                name = char.get("name", "")
+                if not name or name in ("旁白", "narrator", "未识别", "未知"):
+                    continue
+                if name not in all_characters:
+                    all_characters[name] = {
+                        "name": name,
+                        "aliases": set(),
+                        "emotions": set(),
+                        "appears_in_chapters": [],
+                        "total_dialogues": 0,
+                        "role_type": char.get("role_type", "配角"),
+                    }
+                cc = all_characters[name]
+                for alias in char.get("aliases", []):
+                    cc["aliases"].add(alias)
+                for emotion in char.get("emotions", []):
+                    cc["emotions"].add(emotion)
+                if chapter.chapter_index not in cc["appears_in_chapters"]:
+                    cc["appears_in_chapters"].append(chapter.chapter_index)
+                cc["total_dialogues"] += char.get("dialogue_count", 0)
+
+        logger.info(
+            f"[Book {book_id}] 共收集到 {len(all_characters)} 个角色"
+        )
+
+        # 为每个角色匹配 TTS 音色
+        voice_mapper = VoiceMapperService()
+        voice_mapping = {}
+        role_summary = []
+
+        for char_name, char_info in all_characters.items():
+            voice_config = voice_mapper.get_voice_for_speaker(char_name)
+            voice_mapping[char_name] = {
+                "voice_id": voice_config["voice_id"],
+                "speed": voice_config["speed"],
+                "pitch": voice_config["pitch"],
+                "emotion": voice_config["emotion"],
+            }
+            role_summary.append({
+                "name": char_name,
+                "aliases": list(char_info["aliases"]),
+                "voice_id": voice_config["voice_id"],
+                "emotions": list(char_info["emotions"]),
+                "chapters": char_info["appears_in_chapters"],
+                "dialogues": char_info["total_dialogues"],
+            })
+            logger.info(
+                f"  角色 '{char_name}' → 音色 {voice_config['voice_id']} "
+                f"(出现 {len(char_info['appears_in_chapters'])} 章, "
+                f"{char_info['total_dialogues']} 段对话)"
+            )
+
+        # 保存到 MinIO
+        storage = get_storage_service()
+        mapping_data = {
+            "book_id": book_id,
+            "book_title": book.title,
+            "voice_mapping": voice_mapping,
+            "roles": role_summary,
+            "total_roles": len(role_summary),
+        }
+        storage.upload_voice_mapping(book_id, mapping_data)
+
+        # 更新书籍状态
+        book.status = BookStatus.ANALYZING
+        book.updated_at = datetime.utcnow()
+        db.commit()
+
+        logger.info(
+            f"[Book {book_id}] 角色-音色映射完成，"
+            f"共 {len(role_summary)} 个角色，开始逐章生成音频"
+        )
+
+        # 触发第一章的音频生成
+        first_chapter = (
+            db.query(Chapter)
+            .filter(book_id=book_id)
+            .filter(status=ChapterStatus.ANALYZED)
+            .order_by("chapter_index")
+            .first()
+        )
+        if first_chapter:
+            generate_chapter_audio.delay(first_chapter.id)
+
+        return {
+            "book_id": book_id,
+            "total_roles": len(role_summary),
+            "roles": role_summary,
+            "stage": PipelineStage.CHARACTER_MAPPING.value,
+            "success": True,
+        }
+
+
+@celery_app.task(
+    bind=True,
+    base=PipelineTask,
+    name="tasks.task_pipeline.generate_chapter_audio",
+    queue="pipeline",
+    max_retries=3,
+)
+def generate_chapter_audio(self, chapter_id: int) -> Dict[str, Any]:
+    """
+    生成单个章节的音频（阶段四→五→六）
+
+    使用统一的角色-音色映射，逐章：
+    1. 创建音频片段（使用 MinIO 中的角色-音色映射）
+    2. TTS 合成
+    3. 音频后处理
+    4. 触发下一章
+
+    Args:
+        chapter_id: 章节 ID
+
+    Returns:
+        dict: 处理结果
+    """
+    logger.info(f"[Chapter {chapter_id}] ========== 开始生成章节音频 ==========")
+
+    from core.models import Book
+    from core.models.book import BookStatus, GenerationMode
+    from core.models.chapter import ChapterStatus
+
+    with get_db_context() as db:
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
+        if not chapter:
+            return {"success": False, "message": "章节不存在"}
+
+        book = db.query(Book).filter(id=chapter.book_id).first()
+        if not book:
+            return {"success": False, "message": "书籍不存在"}
+
+        book.status = BookStatus.SYNTHESIZING
+        db.commit()
+
+    try:
+        # ── 阶段四：创建音频片段（create_segments 已集成 MinIO 统一映射） ──
+        create_segments(chapter_id)
+
+        # ── 阶段五：TTS 合成（逐段） ──
+        logger.info(f"[Chapter {chapter_id}] 阶段五：TTS 合成")
+        with get_db_context() as db:
+            from core.models.segment import AudioSegment
+            seg_list = (
+                db.query(AudioSegment)
+                .filter(chapter_id=chapter_id)
+                .order_by("segment_index")
+                .all()
+            )
+            seg_ids = [s.id for s in seg_list]
+
+        if seg_ids:
+            for seg_id in seg_ids:
+                synthesize_segment(seg_id)
+            logger.info(f"[Chapter {chapter_id}] 阶段五完成（{len(seg_ids)} 片段）")
+        else:
+            logger.warning(f"[Chapter {chapter_id}] 无音频片段，跳过 TTS")
+
+        # ── 阶段六：音频后处理 ──
+        logger.info(f"[Chapter {chapter_id}] 阶段六：音频后处理")
+        postprocess_chapter(chapter_id)
+
+        # ── 触发下一章（支持手动/自动模式） ──
+        _trigger_next_chapter(chapter_id)
+
+        return {"chapter_id": chapter_id, "success": True}
+
+    except Exception as e:
+        logger.error(f"[Chapter {chapter_id}] 音频生成失败: {e}")
+        with get_db_context() as db:
+            ch = db.query(Chapter).filter(id=chapter_id).first()
+            if ch:
+                ch.status = ChapterStatus.FAILED
+                ch.error_message = str(e)
+                db.commit()
+        raise
 
 
 # ===========================================

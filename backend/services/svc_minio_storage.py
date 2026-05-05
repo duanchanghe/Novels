@@ -421,6 +421,65 @@ class MinioStorageService:
             except StorageError:
                 raise StorageError(f"章节文本不存在: book={book_id}, chapter={chapter_index}")
 
+    # ===========================================
+    # 书籍角色-音色映射存储
+    # ===========================================
+    VOICE_MAPPING_PATH = "books/{book_id}/voice_mapping.json"
+
+    def upload_voice_mapping(
+        self,
+        book_id: int,
+        mapping: dict,
+    ) -> str:
+        """
+        上传书籍的角色-音色映射到 MinIO
+
+        Args:
+            book_id: 书籍 ID
+            mapping: 角色-音色映射字典
+
+        Returns:
+            str: MinIO 对象路径
+        """
+        import json
+        object_name = self.VOICE_MAPPING_PATH.format(book_id=book_id)
+        data = json.dumps(mapping, ensure_ascii=False, indent=2).encode("utf-8")
+
+        self.upload_file(
+            bucket=settings.MINIO_BUCKET_EPUB,
+            object_name=object_name,
+            data=data,
+            content_type="application/json; charset=utf-8",
+        )
+        logger.info(f"角色-音色映射已上传: {object_name}")
+        return object_name
+
+    def download_voice_mapping(self, book_id: int) -> dict:
+        """
+        从 MinIO 下载书籍的角色-音色映射
+
+        Args:
+            book_id: 书籍 ID
+
+        Returns:
+            dict: 角色-音色映射字典（不存在时返回空 dict）
+        """
+        import json
+        object_name = self.VOICE_MAPPING_PATH.format(book_id=book_id)
+        try:
+            data = self.download_file(
+                bucket=settings.MINIO_BUCKET_EPUB,
+                object_name=object_name,
+            )
+            return json.loads(data.decode("utf-8"))
+        except Exception as e:
+            logger.warning(f"角色-音色映射不存在: book={book_id} - {e}")
+            return {}
+
+    def get_voice_mapping_path(self, book_id: int) -> str:
+        """获取角色-音色映射在 MinIO 中的路径"""
+        return self.VOICE_MAPPING_PATH.format(book_id=book_id)
+
     def get_chapter_text_path(self, book_id: int, chapter_index: int) -> str:
         """获取章节文本在 MinIO 中的标准路径"""
         return f"{self.CHAPTER_TEXT_PREFIX}/{book_id}/{chapter_index:03d}_cleaned.txt"

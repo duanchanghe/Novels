@@ -128,12 +128,11 @@ class UploadView(APIView):
 
             book.save()
 
-            # 触发逐章处理
-            chapters = Chapter.objects.filter(book_id=book.id)
-            for chapter in chapters:
-                process_chapter.delay(chapter.id)
+            # 触发全部分析（新流程：先分析→统一角色→匹配音色→再生成）
+            from tasks.task_pipeline import analyze_all_chapters
+            analyze_all_chapters.delay(book.id)
 
-            logger.info(f"上传完成，已触发 {book.total_chapters} 章逐章处理")
+            logger.info(f"上传完成，已触发全部分析流程 ({book.total_chapters} 章)")
 
             return Response({
                 "book_id": book.id,

@@ -215,19 +215,23 @@ class BookRetryView(APIView):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        retried = []
+        # 重置失败章节状态
         for ch in failed_chapters:
             ch.status = ChapterStatus.PENDING
             ch.error_message = None
             ch.failed_segments = 0
-            retried.append({
-                "chapter_id": ch.id,
-                "title": ch.title,
-                "index": ch.chapter_index
-            })
-            process_chapter.delay(ch.id)
 
+        Chapter.objects.bulk_update(failed_chapters, ["status", "error_message", "failed_segments"])
         Book.objects.filter(id=pk).update(status=BookStatus.PENDING)
+
+        # 使用新流程：先全部分析 → 统一角色 → 再逐章生成
+        from tasks.task_pipeline import analyze_all_chapters
+        analyze_all_chapters.delay(pk)
+
+        retried = [
+            {"chapter_id": ch.id, "title": ch.title, "index": ch.chapter_index}
+            for ch in failed_chapters
+        ]
 
         return Response({
             "book_id": pk,
@@ -416,3 +420,106 @@ class BookDeleteView(APIView):
         book.deleted_at = timezone.now()
         book.save()
         return Response({"message": "删除成功"})
+
+
+class BookStopAllView(APIView):
+    """停止所有有声书制作视图"""
+
+    def post(self, request):
+        """
+        停止所有正在处理的有声书制作
+
+        查找所有处于处理中的书籍，将其状态标记为 FAILED，
+        相关章节也一并标记为 FAILED，并尝试撤销 Celery 任务。
+        """
+        processing_statuses = [
+            BookStatus.PENDING,
+            BookStatus.ANALYZING,
+            BookStatus.SYNTHESIZING,
+            BookStatus.POST_PROCESSING,
+            BookStatus.PUBLISHING,
+        ]
+
+        books = Book.objects.filter(
+            deleted_at__isnull=True,
+            status__in=processing_statuses,
+        )
+
+        total = books.count()
+        stopped = []
+        errors = []
+
+        for book in books:
+            try:
+                # 撤销 Celery 任务
+                try:
+                    from tasks.celery_app import app as celery_app
+                    inspector = celery_app.control.inspect()
+
+                    # 收集所有相关任务 ID
+                    task_ids = []
+                    for worker_tasks in [inspector.active() or {}, inspector.reserved() or {}]:
+                        for worker, tasks in worker_tasks.items():
+                            for t in tasks:
+                                t_name = t.get("name", "")
+                                t_args = t.get("args", [])
+                                if ("generate_audiobook" in t_name or
+                                    "process_chapter" in t_name or
+                                    "publish_book" in t_name) and (
+                                    str(book.id) in str(t_args)
+                                ):
+                                    task_ids.append(t["id"])
+
+                    # 撤销任务
+                    for tid in task_ids:
+                        celery_app.control.revoke(tid, terminate=True)
+                        logger.info(f"[StopAll] 已撤销任务 {tid}")
+                except Exception as e:
+                    logger.warning(f"[StopAll] 撤销任务失败: {e}")
+
+                # 更新所有处理中的章节
+                from core.models import Chapter, ChapterStatus
+                chapter_processing = [
+                    ChapterStatus.PENDING,
+                    ChapterStatus.ANALYZING,
+                    ChapterStatus.ANALYZED,
+                    ChapterStatus.SYNTHESIZING,
+                    ChapterStatus.AWAITING_CONFIRM,
+                ]
+
+                updated_chapters = Chapter.objects.filter(
+                    book_id=book.id,
+                    status__in=chapter_processing,
+                ).update(
+                    status=ChapterStatus.FAILED,
+                    error_message="用户主动取消 - 已停止所有制作",
+                )
+
+                # 更新书籍状态
+                old_status = book.status
+                book.status = BookStatus.FAILED
+                book.error_message = "用户主动取消 - 已停止所有制作"
+                book.save()
+
+                stopped.append({
+                    "book_id": book.id,
+                    "title": book.title,
+                    "old_status": old_status,
+                    "chapters_stopped": updated_chapters,
+                })
+                logger.info(
+                    f"[StopAll] 已停止书籍 #{book.id} '{book.title}' "
+                    f"(原状态: {old_status}, 停止章节: {updated_chapters})"
+                )
+            except Exception as e:
+                logger.error(f"[StopAll] 停止书籍 #{book.id} 失败: {e}")
+                errors.append({"book_id": book.id, "error": str(e)})
+
+        return Response({
+            "success": True,
+            "message": f"已停止 {len(stopped)} 本书籍的制作",
+            "total_stopped": len(stopped),
+            "total_errors": len(errors),
+            "stopped_books": stopped,
+            "errors": errors if errors else None,
+        })
