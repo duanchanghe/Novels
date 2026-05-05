@@ -56,11 +56,11 @@ def postprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
         from core.models import Chapter, Book, ChapterStatus, BookStatus, SegmentStatus
         from datetime import datetime
 
-        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
         if not chapter:
             raise ValueError(f"章节不存在: {chapter_id}")
 
-        book = db.query(Book).filter(Book.id == chapter.book_id).first()
+        book = db.query(Book).filter(id=chapter.book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {chapter.book_id}")
 
@@ -86,12 +86,12 @@ def postprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
             # 更新书籍进度
             book.processed_chapters = (
                 db.query(Chapter)
-                .filter(Chapter.book_id == book.id, Chapter.status == ChapterStatus.DONE)
+                .filter(book_id=book.id, status=ChapterStatus.DONE)
                 .count()
             )
 
             # 检查是否全部完成
-            total = db.query(Chapter).filter(Chapter.book_id == book.id).count()
+            total = db.query(Chapter).filter(book_id=book.id).count()
             if book.processed_chapters >= total:
                 book.status = BookStatus.DONE
 
@@ -134,7 +134,7 @@ def postprocess_book(self, book_id: int) -> Dict[str, Any]:
         from core.models import Chapter, Book, ChapterStatus
         from datetime import datetime
 
-        book = db.query(Book).filter(Book.id == book_id).first()
+        book = db.query(Book).filter(id=book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {book_id}")
 

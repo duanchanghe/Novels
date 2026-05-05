@@ -67,6 +67,7 @@ services:
       - audiobook-media:/app/media
       - audiobook-logs:/app/logs
       - audiobook-books:/books
+      - ./backend/staticfiles:/app/staticfiles
     depends_on:
       postgres:
         condition: service_healthy

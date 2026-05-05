@@ -446,12 +446,12 @@ class PublisherService:
         from core.models import Book, Chapter, PublishChannel, PublishRecord, ChapterStatus
 
         with get_db_context() as db:
-            book = db.query(Book).filter(Book.id == book_id).first()
+            book = db.query(Book).filter(id=book_id).first()
             if not book:
                 raise PublishError(f"书籍不存在: {book_id}")
 
             channel = db.query(PublishChannel).filter(
-                PublishChannel.id == channel_id
+                id=channel_id
             ).first()
             if not channel:
                 raise PublishError(f"发布渠道不存在: {channel_id}")
@@ -464,8 +464,8 @@ class PublisherService:
             record = (
                 db.query(PublishRecord)
                 .filter(
-                    PublishRecord.book_id == book_id,
-                    PublishRecord.channel_id == channel_id,
+                    book_id=book_id,
+                    channel_id=channel_id,
                 )
                 .first()
             )
@@ -510,9 +510,9 @@ class PublisherService:
             # 上传章节
             chapters = (
                 db.query(Chapter)
-                .filter(Chapter.book_id == book_id)
-                .filter(Chapter.status == ChapterStatus.DONE)
-                .order_by(Chapter.chapter_index)
+                .filter(book_id=book_id)
+                .filter(status=ChapterStatus.DONE)
+                .order_by("chapter_index")
                 .all()
             )
 
@@ -621,16 +621,16 @@ class PublisherService:
         from core.models import Book, PublishChannel
 
         with get_db_context() as db:
-            book = db.query(Book).filter(Book.id == book_id).first()
+            book = db.query(Book).filter(id=book_id).first()
             if not book:
                 raise PublishError(f"书籍不存在: {book_id}")
 
             # 获取所有启用的发布渠道
             channels = (
                 db.query(PublishChannel)
-                .filter(PublishChannel.is_enabled == True)
-                .filter(PublishChannel.auto_publish == True)
-                .order_by(PublishChannel.priority.desc())
+                .filter(is_enabled=True)
+                .filter(auto_publish=True)
+                .order_by("-priority")
                 .all()
             )
 
@@ -712,7 +712,7 @@ class PublisherService:
         with get_db_context() as db:
             records = (
                 db.query(PublishRecord)
-                .filter(PublishRecord.book_id == book_id)
+                .filter(book_id=book_id)
                 .all()
             )
 
@@ -768,8 +768,8 @@ class PublisherService:
             record = (
                 db.query(PublishRecord)
                 .filter(
-                    PublishRecord.book_id == book_id,
-                    PublishRecord.channel_id == channel_id,
+                    book_id=book_id,
+                    channel_id=channel_id,
                 )
                 .first()
             )

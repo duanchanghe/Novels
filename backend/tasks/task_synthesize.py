@@ -57,7 +57,7 @@ def synthesize_segment(self, segment_id: int) -> Dict[str, Any]:
     with get_db_context() as db:
         from core.models import AudioSegment, SegmentStatus
 
-        segment = db.query(AudioSegment).filter(AudioSegment.id == segment_id).first()
+        segment = db.query(AudioSegment).filter(id=segment_id).first()
         if not segment:
             raise ValueError(f"音频片段不存在: {segment_id}")
 
@@ -139,11 +139,11 @@ def synthesize_chapter(self, chapter_id: int) -> Dict[str, Any]:
     with get_db_context() as db:
         from core.models import Chapter, AudioSegment, Book, ChapterStatus, BookStatus, SegmentStatus
 
-        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
         if not chapter:
             raise ValueError(f"章节不存在: {chapter_id}")
 
-        book = db.query(Book).filter(Book.id == chapter.book_id).first()
+        book = db.query(Book).filter(id=chapter.book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {chapter.book_id}")
 
@@ -155,9 +155,9 @@ def synthesize_chapter(self, chapter_id: int) -> Dict[str, Any]:
         # 获取所有待合成的片段
         segments = (
             db.query(AudioSegment)
-            .filter(AudioSegment.chapter_id == chapter_id)
-            .filter(AudioSegment.status == SegmentStatus.PENDING)
-            .order_by(AudioSegment.segment_index)
+            .filter(chapter_id=chapter_id)
+            .filter(status=SegmentStatus.PENDING)
+            .order_by("segment_index")
             .all()
         )
 

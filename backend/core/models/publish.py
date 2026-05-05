@@ -69,6 +69,8 @@ class PublishRecord(models.Model):
     class Meta:
         db_table = "publish_records"
         ordering = ["-created_at"]
+        verbose_name = "发布记录"
+        verbose_name_plural = "发布记录管理"
         indexes = [
             models.Index(fields=["book", "channel"]),
             models.Index(fields=["status", "created_at"]),

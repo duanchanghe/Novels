@@ -81,6 +81,8 @@ class Chapter(models.Model):
     class Meta:
         db_table = "chapters"
         ordering = ["chapter_index"]
+        verbose_name = "章节"
+        verbose_name_plural = "章节管理"
         indexes = [
             models.Index(fields=["book", "chapter_index"]),
             models.Index(fields=["book", "status"]),

@@ -453,21 +453,21 @@ class MetricsCollector:
         try:
             with get_db_context() as db:
                 from core.models import Book, Chapter
-                from sqlalchemy import func
+                from django.db.models import Sum
 
                 # 统计 DeepSeek Token 消耗
                 deepseek_total = (
-                    db.query(func.sum(Chapter.deepseek_tokens))
-                    .filter(Chapter.deepseek_tokens > 0)
-                    .scalar()
+                    Chapter.objects
+                    .filter(deepseek_tokens__gt=0)
+                    .aggregate(total=Sum("deepseek_tokens"))["total"]
                     or 0
                 )
 
                 # 统计 MiniMax 字符消耗
                 minimax_total = (
-                    db.query(func.sum(Chapter.minimax_characters))
-                    .filter(Chapter.minimax_characters > 0)
-                    .scalar()
+                    Chapter.objects
+                    .filter(minimax_characters__gt=0)
+                    .aggregate(total=Sum("minimax_characters"))["total"]
                     or 0
                 )
 

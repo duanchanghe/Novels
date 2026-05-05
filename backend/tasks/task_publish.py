@@ -58,12 +58,12 @@ def publish_to_channel(
 
     with get_db_context() as db:
         # 获取书籍
-        book = db.query(Book).filter(Book.id == book_id).first()
+        book = db.query(Book).filter(id=book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {book_id}")
 
         # 获取渠道
-        channel = db.query(PublishChannel).filter(PublishChannel.id == channel_id).first()
+        channel = db.query(PublishChannel).filter(id=channel_id).first()
         if not channel:
             raise ValueError(f"发布渠道不存在: {channel_id}")
 
@@ -71,8 +71,8 @@ def publish_to_channel(
         record = (
             db.query(PublishRecord)
             .filter(
-                PublishRecord.book_id == book_id,
-                PublishRecord.channel_id == channel_id,
+                book_id=book_id,
+                channel_id=channel_id,
             )
             .first()
         )
@@ -103,7 +103,7 @@ def publish_to_channel(
 
         # 更新发布记录
         with get_db_context() as db:
-            record = db.query(PublishRecord).filter(PublishRecord.id == record_id).first()
+            record = db.query(PublishRecord).filter(id=record_id).first()
             if record:
                 record.status = PublishStatus.DONE if result.get("success") else PublishStatus.FAILED
                 record.external_album_id = result.get("album_id")
@@ -113,7 +113,7 @@ def publish_to_channel(
                 db.commit()
 
             # 更新渠道统计
-            channel = db.query(PublishChannel).filter(PublishChannel.id == channel_id).first()
+            channel = db.query(PublishChannel).filter(id=channel_id).first()
             if channel:
                 channel.total_published += 1
                 if result.get("success"):
@@ -137,7 +137,7 @@ def publish_to_channel(
         # 更新记录为失败状态
         try:
             with get_db_context() as db:
-                record = db.query(PublishRecord).filter(PublishRecord.id == record_id).first()
+                record = db.query(PublishRecord).filter(id=record_id).first()
                 if record:
                     record.status = PublishStatus.FAILED
                     record.error_message = str(e)
@@ -145,7 +145,7 @@ def publish_to_channel(
                     db.commit()
 
                 # 更新渠道统计
-                channel = db.query(PublishChannel).filter(PublishChannel.id == channel_id).first()
+                channel = db.query(PublishChannel).filter(id=channel_id).first()
                 if channel:
                     channel.failure_count += 1
                     db.commit()
@@ -176,16 +176,16 @@ def publish_book_to_all_channels(self, book_id: int) -> Dict[str, Any]:
     with get_db_context() as db:
         from core.models import Book, PublishChannel, BookStatus
 
-        book = db.query(Book).filter(Book.id == book_id).first()
+        book = db.query(Book).filter(id=book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {book_id}")
 
         # 获取所有启用的发布渠道
         channels = (
             db.query(PublishChannel)
-            .filter(PublishChannel.is_enabled == True)
-            .filter(PublishChannel.auto_publish == True)
-            .order_by(PublishChannel.priority.desc())
+            .filter(is_enabled=True)
+            .filter(auto_publish=True)
+            .order_by("-priority")
             .all()
         )
 

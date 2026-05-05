@@ -118,6 +118,8 @@ class VoiceProfile(models.Model):
     class Meta:
         db_table = "voice_profiles"
         ordering = ["sort_order", "name"]
+        verbose_name = "音色配置"
+        verbose_name_plural = "音色配置管理"
         indexes = [
             models.Index(fields=["book", "role_type"]),
         ]

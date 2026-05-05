@@ -169,11 +169,12 @@ def _scan_single_directory(watch_dir: str) -> Dict[str, Any]:
                     with open(file_path, "rb") as f:
                         file_hash = hashlib.md5(f.read()).hexdigest()
 
-                    # 检查是否已处理
+                    # 检查是否已处理（排除已删除和失败的记录）
                     existing = (
                         db.query(Book)
                         .filter(Book.file_hash == file_hash)
                         .filter(Book.status != BookStatus.FAILED)
+                        .filter(Book.deleted_at.is_(None))  # 只检查未删除的记录
                         .first()
                     )
 
@@ -238,6 +239,26 @@ def process_new_epub(self, file_path: str, file_hash: str = None) -> Dict[str, A
             if not file_hash:
                 with open(file_path, "rb") as f:
                     file_hash = hashlib.md5(f.read()).hexdigest()
+
+            # ===========================================
+            # 去重检查：检查是否已存在相同的书籍
+            # ===========================================
+            existing_book = (
+                db.query(Book)
+                .filter(Book.file_hash == file_hash)
+                .filter(Book.status != BookStatus.FAILED)
+                .first()
+            )
+            if existing_book:
+                logger.info(f"文件已存在，跳过创建: {file_path} (book_id={existing_book.id})")
+                return {
+                    "book_id": existing_book.id,
+                    "title": existing_book.title,
+                    "chapter_count": existing_book.total_chapters,
+                    "success": True,
+                    "skipped": True,
+                    "message": "文件已存在，跳过处理",
+                }
 
             # 创建书籍记录
             book = Book(
@@ -324,11 +345,11 @@ def check_watcher_health(self) -> Dict[str, Any]:
             # 检查是否有处理中的任务
             pending_count = (
                 db.query(Book)
-                .filter(Book.status.in_([
+                .filter(status__in=[
                     BookStatus.ANALYZING,
                     BookStatus.SYNTHESIZING,
                     BookStatus.POST_PROCESSING,
-                ]))
+                ])
                 .count()
             )
 
@@ -336,16 +357,16 @@ def check_watcher_health(self) -> Dict[str, Any]:
             recent_cutoff = datetime.utcnow() - timedelta(hours=1)
             recent_files = (
                 db.query(Book)
-                .filter(Book.source_type == SourceType.WATCH)
-                .filter(Book.created_at >= recent_cutoff)
+                .filter(source_type=SourceType.WATCH)
+                .filter(created_at__gte=recent_cutoff)
                 .count()
             )
 
             # 检查失败的书籍
             failed_count = (
                 db.query(Book)
-                .filter(Book.status == BookStatus.FAILED)
-                .filter(Book.created_at >= recent_cutoff)
+                .filter(status=BookStatus.FAILED)
+                .filter(created_at__gte=recent_cutoff)
                 .count()
             )
 

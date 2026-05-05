@@ -87,6 +87,8 @@ class Book(models.Model):
     class Meta:
         db_table = "books"
         ordering = ["-created_at"]
+        verbose_name = "书籍"
+        verbose_name_plural = "书籍管理"
         indexes = [
             models.Index(fields=["status", "created_at"]),
             models.Index(fields=["source_type", "status"]),

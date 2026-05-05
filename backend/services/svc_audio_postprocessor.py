@@ -86,16 +86,16 @@ class AudioPostprocessorService:
         from core.models.segment import SegmentStatus, AudioSegment as SegmentModel
 
         with get_db_context() as db:
-            chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+            chapter = db.query(Chapter).filter(id=chapter_id).first()
             if not chapter:
                 raise AppError(f"章节不存在: {chapter_id}")
 
             # 获取所有成功的音频片段（按情感标注排序）
             segments = (
                 db.query(SegmentModel)
-                .filter(SegmentModel.chapter_id == chapter_id)
-                .filter(SegmentModel.status == SegmentStatus.SUCCESS)
-                .order_by(SegmentModel.segment_index)
+                .filter(chapter_id=chapter_id)
+                .filter(status=SegmentStatus.SUCCESS)
+                .order_by("segment_index")
                 .all()
             )
 
@@ -103,7 +103,7 @@ class AudioPostprocessorService:
                 raise AppError(f"章节没有可用的音频片段: {chapter_id}")
 
             # 获取书籍信息用于 ID3 标签
-            book = db.query(Book).filter(Book.id == chapter.book_id).first()
+            book = db.query(Book).filter(id=chapter.book_id).first()
             book_title = book.title if book else "未知书籍"
             book_author = book.author if book else "未知作者"
 
@@ -207,7 +207,7 @@ class AudioPostprocessorService:
         """
         from core.models import Chapter, ChapterStatus
 
-        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
         if chapter:
             chapter.audio_file_path = audio_file_path
             chapter.audio_duration = duration_seconds
@@ -239,7 +239,7 @@ class AudioPostprocessorService:
         """
         from core.models import Book, BookStatus
 
-        book = db.query(Book).filter(Book.id == book_id).first()
+        book = db.query(Book).filter(id=book_id).first()
         if book:
             book.full_audio_path = full_audio_path
             book.full_audio_duration = total_duration_seconds
@@ -693,16 +693,16 @@ class AudioPostprocessorService:
         from core.models import Chapter, Book, ChapterStatus
 
         with get_db_context() as db:
-            book = db.query(Book).filter(Book.id == book_id).first()
+            book = db.query(Book).filter(id=book_id).first()
             if not book:
                 raise AppError(f"书籍不存在: {book_id}")
 
             # 获取所有已完成章节
             chapters = (
                 db.query(Chapter)
-                .filter(Chapter.book_id == book_id)
-                .filter(Chapter.status == ChapterStatus.DONE)
-                .order_by(Chapter.chapter_index)
+                .filter(book_id=book_id)
+                .filter(status=ChapterStatus.DONE)
+                .order_by("chapter_index")
                 .all()
             )
 

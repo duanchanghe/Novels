@@ -5,8 +5,8 @@
 """
 Database utilities for AI 有声书工坊.
 
-This module provides utilities for working with Django ORM.
-For Celery tasks, Django models can be accessed directly.
+This module provides a compatibility layer for SQLAlchemy-style syntax
+to work with Django ORM.
 """
 
 from django.db import transaction
@@ -35,7 +35,7 @@ class DjangoCompatDB:
     """
     
     def query(self, model):
-        return model.objects
+        return DjangoQuerySetProxy(model)
     
     def add(self, obj):
         pass  # Django ORM 不需要
@@ -44,12 +44,61 @@ class DjangoCompatDB:
         pass  # Django ORM 自动提交
     
     def refresh(self, obj):
-        obj.refresh_from_db()
+        if hasattr(obj, 'refresh_from_db'):
+            obj.refresh_from_db()
     
     def close(self):
         pass
 
 
+class DjangoQuerySetProxy:
+    """
+    代理 Django QuerySet，支持链式调用
+    
+    支持方法：
+    - filter(**kwargs): 过滤
+    - count(): 计数
+    - all(): 获取所有
+    - first(): 获取第一个
+    - order_by(*fields): 排序
+    """
+    
+    def __init__(self, model):
+        self._model = model
+        self._queryset = model.objects.all()
+    
+    def filter(self, **kwargs):
+        """过滤查询"""
+        self._queryset = self._queryset.filter(**kwargs)
+        return self
+    
+    def exclude(self, **kwargs):
+        """排除查询"""
+        self._queryset = self._queryset.exclude(**kwargs)
+        return self
+    
+    def count(self):
+        """返回数量"""
+        return self._queryset.count()
+    
+    def all(self):
+        """返回所有结果列表"""
+        return list(self._queryset.all())
+    
+    def first(self):
+        """返回第一个结果"""
+        return self._queryset.first()
+    
+    def order_by(self, *fields):
+        """排序"""
+        self._queryset = self._queryset.order_by(*fields)
+        return self
+    
+    def __iter__(self):
+        return iter(self._queryset)
+
+
+# 全局数据库上下文实例
 _db = DjangoCompatDB()
 
 
@@ -58,6 +107,10 @@ def get_db_context():
     """
     Context manager for database sessions.
     
-    返回一个兼容对象，支持 db.query(Model) 语法
+    返回一个兼容对象，支持 db.query(Model).filter(field=value) 语法
+    
+    Usage:
+        with get_db_context() as db:
+            book = db.query(Book).filter(id=1).first()
     """
     yield _db

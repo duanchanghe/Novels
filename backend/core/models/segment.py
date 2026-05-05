@@ -64,6 +64,8 @@ class AudioSegment(models.Model):
     class Meta:
         db_table = "audio_segments"
         ordering = ["segment_index"]
+        verbose_name = "音频片段"
+        verbose_name_plural = "音频片段管理"
         indexes = [
             models.Index(fields=["chapter", "segment_index"]),
             models.Index(fields=["chapter", "status"]),

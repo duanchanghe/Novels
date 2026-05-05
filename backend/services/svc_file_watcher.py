@@ -572,8 +572,8 @@ class MultiDirectoryWatcher:
 
                 existing = (
                     db.query(Book)
-                    .filter(Book.file_hash == file_hash)
-                    .filter(Book.status != BookStatus.FAILED)
+                    .filter(file_hash=file_hash)
+                    .exclude(status=BookStatus.FAILED)
                     .first()
                 )
 

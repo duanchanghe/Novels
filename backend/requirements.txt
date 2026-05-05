@@ -59,3 +59,6 @@ isort==5.13.2
 
 # Gunicorn (for production)
 gunicorn==21.2.0
+
+# Static file handling
+whitenoise==6.6.0

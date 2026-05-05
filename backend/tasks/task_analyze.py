@@ -70,12 +70,12 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
         from core.models.chapter import ChapterStatus
 
         # 获取章节
-        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
         if not chapter:
             raise ValueError(f"章节不存在: {chapter_id}")
 
         # 获取书籍
-        book = db.query(Book).filter(Book.id == chapter.book_id).first()
+        book = db.query(Book).filter(id=chapter.book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {chapter.book_id}")
 
@@ -144,15 +144,15 @@ def analyze_book(self, book_id: int) -> Dict[str, Any]:
         from core.models.book import BookStatus
         from core.models.chapter import ChapterStatus
 
-        book = db.query(Book).filter(Book.id == book_id).first()
+        book = db.query(Book).filter(id=book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {book_id}")
 
         chapters = (
             db.query(Chapter)
-            .filter(Chapter.book_id == book_id)
-            .filter(Chapter.status == ChapterStatus.PENDING)
-            .order_by(Chapter.chapter_index)
+            .filter(book_id=book_id)
+            .filter(status=ChapterStatus.PENDING)
+            .order_by("chapter_index")
             .all()
         )
 

@@ -55,8 +55,11 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 # Copy application code
 COPY --chown=appuser:appgroup backend/ .
 
-# Create necessary directories
-RUN mkdir -p /app/logs && chmod 777 /app/logs && chown -R appuser:appgroup /app
+# Create necessary directories and collect static files
+RUN mkdir -p /app/logs /app/staticfiles && \
+    chmod 777 /app/logs /app/staticfiles && \
+    chown -R appuser:appgroup /app && \
+    python manage.py collectstatic --noinput || true
 
 # Switch to non-root user
 USER appuser

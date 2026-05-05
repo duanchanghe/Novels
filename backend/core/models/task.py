@@ -74,6 +74,8 @@ class TTSTask(models.Model):
     class Meta:
         db_table = "tts_tasks"
         ordering = ["-created_at"]
+        verbose_name = "TTS任务"
+        verbose_name_plural = "TTS任务管理"
         indexes = [
             models.Index(fields=["status", "created_at"]),
         ]

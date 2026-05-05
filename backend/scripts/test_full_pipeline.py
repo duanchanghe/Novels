@@ -699,7 +699,7 @@ class FullPipelineIntegrationTest:
                 from core.models.book import SourceType, BookStatus
 
                 # 检查是否已存在
-                existing = db.query(Book).filter(Book.file_hash == file_hash).first()
+                existing = db.query(Book).filter(file_hash=file_hash).first()
                 if existing:
                     book = existing
                     logger.info(f"使用已存在的书籍: {book.id}")

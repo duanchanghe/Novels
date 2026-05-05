@@ -55,6 +55,8 @@ class PublishChannel(models.Model):
     class Meta:
         db_table = "publish_channels"
         ordering = ["-priority", "-created_at"]
+        verbose_name = "发布渠道"
+        verbose_name_plural = "发布渠道管理"
         indexes = [
             models.Index(fields=["platform_type", "is_enabled"]),
             models.Index(fields=["user_id", "is_enabled"]),

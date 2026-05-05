@@ -144,7 +144,7 @@ def _update_book_progress(book_id: int, message: str = None):
             from core.models import Book
             from core.models.book import BookStatus
 
-            book = db.query(Book).filter(Book.id == book_id).first()
+            book = db.query(Book).filter(id=book_id).first()
             if book:
                 book.updated_at = datetime.utcnow()
                 if message:
@@ -161,7 +161,7 @@ def _update_book_error(book_id: int, error_message: str):
             from core.models import Book
             from core.models.book import BookStatus
 
-            book = db.query(Book).filter(Book.id == book_id).first()
+            book = db.query(Book).filter(id=book_id).first()
             if book:
                 book.status = BookStatus.FAILED
                 book.error_message = error_message
@@ -209,18 +209,18 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
         from services.svc_chapter_cleaner import clean_chapter_text, clean_chapter_with_report
         from services.svc_minio_storage import get_storage_service
 
-        book = db.query(Book).filter(Book.id == book_id).first()
+        book = db.query(Book).filter(id=book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {book_id}")
 
         # ── 检查章节是否已存在（上传时可能已解析） ──
         existing_chapters = (
             db.query(Chapter)
-            .filter(Chapter.book_id == book_id)
+            .filter(book_id=book_id)
             .count()
         )
         if existing_chapters > 0:
-            chapters = db.query(Chapter).filter(Chapter.book_id == book_id).all()
+            chapters = db.query(Chapter).filter(book_id=book_id).all()
             chapter_ids = [ch.id for ch in chapters]
             logger.info(
                 f"[Book {book_id}] 章节已存在 ({existing_chapters} 章)，跳过解析"
@@ -357,7 +357,7 @@ def parse_epub(self, book_id: int) -> Dict[str, Any]:
             db.commit()
 
             # 获取章节 ID 列表
-            chapters = db.query(Chapter).filter(Chapter.book_id == book_id).all()
+            chapters = db.query(Chapter).filter(book_id=book_id).all()
             chapter_ids = [ch.id for ch in chapters]
 
             logger.info(
@@ -424,7 +424,7 @@ def preprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
         from services.svc_text_preprocessor import TextPreprocessorService
         from services.svc_minio_storage import get_storage_service
 
-        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
         if not chapter:
             raise ValueError(f"章节不存在: {chapter_id}")
 
@@ -517,15 +517,15 @@ def preprocess_book(self, book_id: int) -> Dict[str, Any]:
         from core.models.chapter import ChapterStatus
         from core.models.book import BookStatus
 
-        book = db.query(Book).filter(Book.id == book_id).first()
+        book = db.query(Book).filter(id=book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {book_id}")
 
         chapters = (
             db.query(Chapter)
-            .filter(Chapter.book_id == book_id)
-            .filter(Chapter.status == ChapterStatus.PENDING)
-            .order_by(Chapter.chapter_index)
+            .filter(book_id=book_id)
+            .filter(status=ChapterStatus.PENDING)
+            .order_by("chapter_index")
             .all()
         )
 
@@ -577,11 +577,11 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
         from services.svc_deepseek_analyzer import DeepSeekAnalyzerService
         from services.svc_minio_storage import get_storage_service
 
-        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
         if not chapter:
             raise ValueError(f"章节不存在: {chapter_id}")
 
-        book = db.query(Book).filter(Book.id == chapter.book_id).first()
+        book = db.query(Book).filter(id=chapter.book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {chapter.book_id}")
 
@@ -593,8 +593,8 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             # 检查是否为第一个分析的章节
             analyzed_count = (
                 db.query(Chapter)
-                .filter(Chapter.book_id == chapter.book_id)
-                .filter(Chapter.status == ChapterStatus.ANALYZED)
+                .filter(book_id=chapter.book_id)
+                .filter(status=ChapterStatus.ANALYZED)
                 .count()
             )
             if analyzed_count == 0:
@@ -715,7 +715,7 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
         from core.models.segment import SegmentStatus, AudioSegment as AudioSegmentModel
         from services.svc_voice_mapper import VoiceMapperService
 
-        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
         if not chapter:
             raise ValueError(f"章节不存在: {chapter_id}")
 
@@ -848,11 +848,11 @@ def synthesize_segment(self, segment_id: int) -> Dict[str, Any]:
         from services.svc_minimax_tts import MiniMaxTTSService
         from services.svc_minio_storage import get_storage_service
 
-        segment = db.query(AudioSegment).filter(AudioSegment.id == segment_id).first()
+        segment = db.query(AudioSegment).filter(id=segment_id).first()
         if not segment:
             raise ValueError(f"音频片段不存在: {segment_id}")
 
-        chapter = db.query(Chapter).filter(Chapter.id == segment.chapter_id).first()
+        chapter = db.query(Chapter).filter(id=segment.chapter_id).first()
 
         try:
             # 更新状态
@@ -894,8 +894,8 @@ def synthesize_segment(self, segment_id: int) -> Dict[str, Any]:
                 chapter.completed_segments = (
                     db.query(AudioSegment)
                     .filter(
-                        AudioSegment.chapter_id == chapter.id,
-                        AudioSegment.status == SegmentStatus.SUCCESS,
+                        chapter_id=chapter.id,
+                        status=SegmentStatus.SUCCESS,
                     )
                     .count()
                 )
@@ -965,11 +965,11 @@ def postprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
         from core.models.book import BookStatus
         from services.svc_audio_postprocessor import AudioPostprocessorService
 
-        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
         if not chapter:
             raise ValueError(f"章节不存在: {chapter_id}")
 
-        book = db.query(Book).filter(Book.id == chapter.book_id).first()
+        book = db.query(Book).filter(id=chapter.book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {chapter.book_id}")
 
@@ -992,12 +992,12 @@ def postprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
             # 更新书籍进度
             book.processed_chapters = (
                 db.query(Chapter)
-                .filter(Chapter.book_id == book.id, Chapter.status == ChapterStatus.DONE)
+                .filter(book_id=book.id, status=ChapterStatus.DONE)
                 .count()
             )
 
             # 检查是否全部完成
-            total = db.query(Chapter).filter(Chapter.book_id == book.id).count()
+            total = db.query(Chapter).filter(book_id=book.id).count()
             if book.processed_chapters >= total:
                 book.status = BookStatus.DONE
 
@@ -1064,8 +1064,8 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
         with get_db_context() as db:
             seg_list = (
                 db.query(AudioSegment)
-                .filter(AudioSegment.chapter_id == chapter_id)
-                .order_by(AudioSegment.segment_index)
+                .filter(chapter_id=chapter_id)
+                .order_by("segment_index")
                 .all()
             )
             seg_ids = [s.id for s in seg_list]
@@ -1087,15 +1087,15 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
         # ── 根据生成模式决定是否自动触发下一章 ──
         with get_db_context() as db:
             from core.models import Chapter
-            chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+            chapter = db.query(Chapter).filter(id=chapter_id).first()
             if not chapter:
                 return {"chapter_id": chapter_id, "success": True}
 
-            book = db.query(Book).filter(Book.id == chapter.book_id).first()
+            book = db.query(Book).filter(id=chapter.book_id).first()
             next_chapter = (
                 db.query(Chapter)
-                .filter(Chapter.book_id == chapter.book_id)
-                .filter(Chapter.chapter_index == chapter.chapter_index + 1)
+                .filter(book_id=chapter.book_id)
+                .filter(chapter_index=chapter.chapter_index + 1)
                 .first()
             )
 
@@ -1147,7 +1147,7 @@ def process_chapter(self, chapter_id: int) -> Dict[str, Any]:
         logger.error(f"[Chapter {chapter_id}] 章节处理失败: {e}")
         with get_db_context() as db:
             from core.models import Chapter
-            chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+            chapter = db.query(Chapter).filter(id=chapter_id).first()
             if chapter:
                 retry_count = (chapter.failed_segments or 0) + 1
                 if retry_count >= 3:
@@ -1187,42 +1187,20 @@ def _try_publish_book(
     from core.models import Chapter, Book
     from core.models.chapter import ChapterStatus
     from core.models.book import BookStatus
-    from sqlalchemy import func
 
     with get_db_context() as db:
-        chapter = db.query(Chapter).filter(Chapter.id == chapter_id).first()
+        chapter = db.query(Chapter).filter(id=chapter_id).first()
         if not chapter:
             return
 
         book_id = chapter.book_id
-        total = (
-            db.query(func.count(Chapter.id))
-            .filter(Chapter.book_id == book_id)
-            .scalar()
-            or 0
-        )
-        done = (
-            db.query(func.count(Chapter.id))
-            .filter(
-                Chapter.book_id == book_id,
-                Chapter.status == ChapterStatus.DONE,
-            )
-            .scalar()
-            or 0
-        )
-        failed = (
-            db.query(func.count(Chapter.id))
-            .filter(
-                Chapter.book_id == book_id,
-                Chapter.status == ChapterStatus.FAILED,
-            )
-            .scalar()
-            or 0
-        )
+        total = db.query(Chapter).filter(book_id=book_id).count()
+        done = db.query(Chapter).filter(book_id=book_id, status=ChapterStatus.DONE).count()
+        failed = db.query(Chapter).filter(book_id=book_id, status=ChapterStatus.FAILED).count()
 
         # 所有章节都处于终态（DONE 或 FAILED）→ 触发发布
         if done + failed >= total:
-            book = db.query(Book).filter(Book.id == book_id).first()
+            book = db.query(Book).filter(id=book_id).first()
             if book:
                 book.processed_chapters = done
                 book.status = BookStatus.PUBLISHING
@@ -1269,7 +1247,7 @@ def publish_book(self, book_id: int) -> Dict[str, Any]:
         from core.models.book import BookStatus
         from tasks.task_publish import publish_book_to_all_channels
 
-        book = db.query(Book).filter(Book.id == book_id).first()
+        book = db.query(Book).filter(id=book_id).first()
         if not book:
             raise ValueError(f"书籍不存在: {book_id}")
 
@@ -1285,8 +1263,8 @@ def publish_book(self, book_id: int) -> Dict[str, Any]:
         # 检查是否有启用且配置自动发布的渠道
         channels = (
             db.query(PublishChannel)
-            .filter(PublishChannel.is_enabled == True)
-            .filter(PublishChannel.auto_publish == True)
+            .filter(is_enabled=True)
+            .filter(auto_publish=True)
             .all()
         )
 
@@ -1375,7 +1353,7 @@ def generate_audiobook(self, book_id: int) -> Dict[str, Any]:
         logger.error(f"[Book {book_id}] 流水线启动失败: {e}")
         with get_db_context() as db:
             from core.models import Book
-            book = db.query(Book).filter(Book.id == book_id).first()
+            book = db.query(Book).filter(id=book_id).first()
             if book:
                 book.status = BookStatus.FAILED
                 book.error_message = str(e)
@@ -1459,13 +1437,12 @@ def check_pipeline_status(book_id: int) -> Dict[str, Any]:
         from core.models.book import BookStatus
         from core.models.chapter import ChapterStatus
         from core.models.segment import SegmentStatus
-        from sqlalchemy import func
 
-        book = db.query(Book).filter(Book.id == book_id).first()
+        book = db.query(Book).filter(id=book_id).first()
         if not book:
             return {"error": "书籍不存在", "book_id": book_id}
 
-        chapters = db.query(Chapter).filter(Chapter.book_id == book_id).all()
+        chapters = db.query(Chapter).filter(book_id=book_id).all()
 
         # 统计各状态章节数
         status_counts = {}
@@ -1530,8 +1507,8 @@ def retry_failed_chapters(book_id: int) -> Dict[str, Any]:
 
         failed_chapters = (
             db.query(Chapter)
-            .filter(Chapter.book_id == book_id)
-            .filter(Chapter.status == ChapterStatus.FAILED)
+            .filter(book_id=book_id)
+            .filter(status=ChapterStatus.FAILED)
             .all()
         )
 
@@ -1637,7 +1614,7 @@ def cancel_pipeline(book_id: int) -> Dict[str, Any]:
     logger.info(f"[Book {book_id}] 尝试取消流水线执行")
 
     with get_db_context() as db:
-        book = db.query(Book).filter(Book.id == book_id).first()
+        book = db.query(Book).filter(id=book_id).first()
         if not book:
             return {"success": False, "message": "书籍不存在"}
 
