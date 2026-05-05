@@ -850,8 +850,6 @@ class DeepSeekAnalyzerService:
 
             for i, chunk in enumerate(chunks):
                 logger.info(f"分析文本片段 {i + 1}/{len(chunks)}")
-
-                # 传递已识别的角色
                 known_roles = list(all_characters.keys()) if all_characters else role_list
                 result = await self._call_deepseek(
                     self.FULL_ANALYSIS_PROMPT.format(
@@ -860,12 +858,10 @@ class DeepSeekAnalyzerService:
                     )
                 )
 
-                # 调整段落索引
                 for para in result.get("paragraphs", []):
                     para["paragraph_index"] += base_index
                     all_paragraphs.append(para)
 
-                # 合并角色
                 for char in result.get("characters", []):
                     name = char.get("name")
                     if name in all_characters:
@@ -874,8 +870,6 @@ class DeepSeekAnalyzerService:
                         all_characters[name] = char
 
                 base_index = len(all_paragraphs)
-                
-                # 更新成本统计
                 _cost_stats.add(
                     tokens=len(chunk) // 4,
                     cost=len(chunk) // 4 * self.input_price / 1000
@@ -1098,14 +1092,52 @@ class DeepSeekAnalyzerService:
         Returns:
             dict: 分析结果
         """
-        import asyncio
+        if not self.api_key:
+            raise DeepSeekApiError("DeepSeek API Key 未配置")
+
+        if not text or not text.strip():
+            return {"paragraphs": [], "characters": []}
+
+        # 检查缓存
+        if self.use_cache:
+            cached_result = _analysis_cache.get(text)
+            if cached_result:
+                logger.info("使用缓存的分析结果")
+                _cost_stats.add(0, 0, is_cache_hit=True)
+                return cached_result
 
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(self.analyze_text(text, role_list))
-        finally:
-            loop.close()
+            # 使用同步 API 调用（避免 ForkPoolWorker 中 asyncio 问题）
+            result = self._full_analysis_sync(text, role_list)
+
+            if result is None:
+                result = {"paragraphs": [], "characters": []}
+            if "paragraphs" not in result:
+                result["paragraphs"] = []
+            if "characters" not in result:
+                result["characters"] = []
+
+            result = self._merge_role_aliases(result)
+
+            if self.use_cache:
+                _analysis_cache.set(text, result)
+
+            return result
+        except DeepSeekApiError:
+            raise
+        except Exception as e:
+            logger.error(f"同步分析失败: {e}")
+            # 回退到异步方式
+            import asyncio
+            try:
+                return asyncio.run(self.analyze_text(text, role_list))
+            except RuntimeError:
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    return loop.run_until_complete(self.analyze_text(text, role_list))
+                finally:
+                    loop.close()
 
     def _extract_characters(self, paragraphs: List[Dict]) -> List[Dict[str, Any]]:
         """
@@ -1163,9 +1195,6 @@ class DeepSeekAnalyzerService:
         """
         import asyncio
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
         async def _normalize():
             result = await self._call_deepseek(
                 self.TEXT_NORMALIZATION_PROMPT.format(text=text)
@@ -1175,9 +1204,14 @@ class DeepSeekAnalyzerService:
             return text
 
         try:
-            return loop.run_until_complete(_normalize())
-        finally:
-            loop.close()
+            return asyncio.run(_normalize())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                return loop.run_until_complete(_normalize())
+            finally:
+                loop.close()
 
     def clear_cache(self) -> None:
         """清空分析缓存"""
@@ -1207,3 +1241,130 @@ class DeepSeekAnalyzerService:
         global _cost_stats
         _cost_stats = CostStats()
         logger.info("成本统计已重置")
+
+    def _call_deepseek_sync(self, prompt: str) -> Dict[str, Any]:
+        """
+        同步调用 DeepSeek API（用于 ForkPoolWorker 环境）
+        
+        在 Celery ForkPoolWorker 中，asyncio 事件循环可能无法正常工作，
+        使用同步 HTTP 调用作为替代。
+        
+        Args:
+            prompt: 提示词
+        
+        Returns:
+            dict: API 响应内容
+        """
+        import httpx as httpx_sync
+        
+        global _cost_stats
+        
+        try:
+            import time as _time
+            _t0 = _time.time()
+            logger.debug(f"同步 DeepSeek API 调用开始, prompt 长度: {len(prompt)}")
+            
+            response = httpx_sync.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": self.temperature,
+                    "max_tokens": self.max_tokens,
+                },
+                timeout=300.0,
+            )
+            
+            _t1 = _time.time()
+            logger.debug(f"同步 DeepSeek API 响应: status={response.status_code}, 耗时={_t1-_t0:.1f}秒")
+            
+            if response.status_code != 200:
+                raise DeepSeekApiError(
+                    f"DeepSeek API 调用失败: {response.status_code} - {response.text[:200]}"
+                )
+            
+            result = response.json()
+            content = result["choices"][0]["message"]["content"]
+            
+            usage = result.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+            total_tokens = usage.get("total_tokens", 0)
+            
+            logger.debug(f"DeepSeek API token 使用: prompt={prompt_tokens}, completion={completion_tokens}, 内容长度={len(content)}")
+            
+            cost = (prompt_tokens * self.input_price + completion_tokens * self.output_price) / 1000
+            _cost_stats.add(total_tokens, cost)
+            
+            parsed = _parse_deepseek_response(content)
+            paras = parsed.get("paragraphs", [])
+            logger.debug(f"DeepSeek API 解析结果: {len(paras)} 段落")
+            return parsed
+            
+        except Exception as e:
+            _cost_stats.add_error()
+            logger.error(f"同步 DeepSeek API 调用异常: {type(e).__name__}: {e}")
+            raise DeepSeekApiError(f"DeepSeek API 调用失败: {e}")
+
+    def _full_analysis_sync(self, text: str, role_list: List[str] = None) -> Dict[str, Any]:
+        """
+        同步完整分析（用于 Celery ForkPoolWorker 环境）
+
+        Args:
+            text: 待分析文本
+            role_list: 已知角色列表
+
+        Returns:
+            dict: 分析结果
+        """
+        # 处理长文本
+        chunks = self._split_long_text(text)
+
+        if len(chunks) == 1:
+            # 短文本，单次调用
+            result = self._call_deepseek_sync(
+                self.FULL_ANALYSIS_PROMPT.format(
+                    text=text,
+                    role_list=", ".join(role_list) if role_list else "未知",
+                )
+            )
+            _cost_stats.add(tokens=len(text) // 4, cost=len(text) // 4 * self.input_price / 1000)
+            return result
+        else:
+            # 长文本，分段分析后合并
+            all_paragraphs = []
+            all_characters = {}
+            base_index = 0
+
+            for i, chunk in enumerate(chunks):
+                logger.info(f"分析文本片段 {i + 1}/{len(chunks)}")
+                known_roles = list(all_characters.keys()) if all_characters else role_list
+                result = self._call_deepseek_sync(
+                    self.FULL_ANALYSIS_PROMPT.format(
+                        text=chunk,
+                        role_list=", ".join(known_roles) if known_roles else "未知",
+                    )
+                )
+
+                for para in result.get("paragraphs", []):
+                    para["paragraph_index"] += base_index
+                    all_paragraphs.append(para)
+
+                for char in result.get("characters", []):
+                    name = char.get("name")
+                    if name in all_characters:
+                        all_characters[name]["dialogue_count"] += char.get("dialogue_count", 0)
+                    else:
+                        all_characters[name] = char
+
+                base_index = len(all_paragraphs)
+                _cost_stats.add(tokens=len(chunk) // 4, cost=len(chunk) // 4 * self.input_price / 1000)
+
+            return {
+                "paragraphs": all_paragraphs,
+                "characters": list(all_characters.values()),
+            }

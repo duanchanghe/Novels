@@ -59,7 +59,8 @@ COPY --chown=appuser:appgroup backend/ .
 RUN mkdir -p /app/logs /app/staticfiles && \
     chmod 777 /app/logs /app/staticfiles && \
     chown -R appuser:appgroup /app && \
-    python manage.py collectstatic --noinput || true
+    python manage.py collectstatic --noinput; \
+    chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser
@@ -108,7 +109,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=appuser:appgroup backend/ .
 
 # Create necessary directories
-RUN mkdir -p /app/logs && chmod 777 /app/logs && chown -R appuser:appgroup /app
+RUN mkdir -p /app/logs && chmod 777 /app/logs && chown -R appuser:appgroup /app && \
+    touch /app/logs/app.log && chown appuser:appgroup /app/logs/app.log
 
 # Switch to non-root user
 USER appuser
@@ -151,7 +153,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=appuser:appgroup backend/ .
 
 # Create necessary directories and set permissions
-RUN mkdir -p /app/logs && chmod 777 /app/logs && chown -R appuser:appgroup /app
+RUN mkdir -p /app/logs && chmod 777 /app/logs && chown -R appuser:appgroup /app && \
+    touch /app/logs/app.log && chown appuser:appgroup /app/logs/app.log
 
 # Switch to non-root user
 USER appuser

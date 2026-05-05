@@ -354,6 +354,47 @@ class BookDownloadView(APIView):
         })
 
 
+class BookSubtitleView(APIView):
+    """章节字幕下载视图"""
+
+    def get(self, request, pk):
+        """
+        获取章节字幕
+
+        Path Parameters:
+            pk: 书籍ID
+        Query Parameters:
+            chapter_id: 章节ID（可选，不传则返回所有章节字幕列表）
+        """
+        try:
+            book = Book.objects.get(id=pk, deleted_at__isnull=True)
+        except Book.DoesNotExist:
+            return Response(
+                {"detail": "书籍不存在"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        chapter_id = request.GET.get('chapter_id')
+        chapters_query = Chapter.objects.filter(book_id=pk).order_by('chapter_index')
+
+        if chapter_id:
+            chapters_query = chapters_query.filter(id=chapter_id)
+
+        result = []
+        for ch in chapters_query:
+            subtitle_info = {
+                "chapter_id": ch.id,
+                "chapter_index": ch.chapter_index,
+                "title": ch.title,
+                "subtitle_url": ch.subtitle_url,
+            }
+            if ch.audio_duration:
+                subtitle_info["duration_seconds"] = ch.audio_duration
+            result.append(subtitle_info)
+
+        return Response(result)
+
+
 class BookDeleteView(APIView):
     """书籍删除视图"""
 

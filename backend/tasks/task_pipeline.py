@@ -612,7 +612,7 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
                         book_id=chapter.book_id,
                         chapter_index=chapter.chapter_index,
                     )
-                    logger.debug(
+                    logger.info(
                         f"[Chapter {chapter_id}] 从 MinIO 读取文本: {len(text)} 字符"
                     )
                 except Exception as e:
@@ -648,8 +648,10 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
                 }
 
             # 执行分析
+            logger.info(f"[Chapter {chapter_id}] 开始调用 DeepSeek 分析器，文本长度: {len(text)}")
             analyzer = DeepSeekAnalyzerService()
             result = analyzer.analyze_chapter(text)
+            logger.info(f"[Chapter {chapter_id}] DeepSeek 分析返回: 段落={len(result.get('paragraphs',[]))}, 角色={len(result.get('characters',[]))}")
 
             # 更新章节
             chapter.analysis_result = result
@@ -728,21 +730,58 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
             if paragraphs and len(paragraphs) > 0:
                 logger.info(f"[Chapter {chapter_id}] 第一个段落示例: {paragraphs[0] if paragraphs else 'N/A'}")
 
-            # 如果没有段落，尝试使用 raw_text 拆分
+            # 如果没有段落，尝试从完整清洗文本生成段落
             if not paragraphs:
-                logger.warning(f"[Chapter {chapter_id}] 分析结果中没有段落，使用 raw_text 拆分")
-                raw_text = chapter.raw_text or ""
-                lines = [l.strip() for l in raw_text.split("\n") if l.strip()]
-                paragraphs = [
-                    {
-                        "text": line,
-                        "role": "narrator",
-                        "emotion": "neutral",
-                        "speaker": "旁白"
-                    }
-                    for line in lines
-                ]
-                logger.info(f"[Chapter {chapter_id}] 从 raw_text 拆分了 {len(paragraphs)} 个段落")
+                logger.warning(f"[Chapter {chapter_id}] 分析结果中没有段落，尝试从完整文本拆分")
+                full_text = ""
+                # 优先从 MinIO 获取完整清洗文本
+                if chapter.cleaned_text and chapter.cleaned_text.startswith("chapters/"):
+                    try:
+                        from services.svc_minio_storage import get_storage_service
+                        storage = get_storage_service()
+                        full_text = storage.download_chapter_text(
+                            book_id=chapter.book_id,
+                            chapter_index=chapter.chapter_index,
+                        )
+                    except Exception as e:
+                        logger.warning(f"[Chapter {chapter_id}] MinIO 读取失败: {e}")
+                # 回退到 DB 中的文本
+                if not full_text:
+                    full_text = chapter.cleaned_text or chapter.raw_text or ""
+                    if isinstance(full_text, str) and full_text.startswith("chapters/"):
+                        full_text = ""  # 还是路径，跳过
+                # 按句子边界拆分（中文标点）
+                if full_text and len(full_text.strip()) > 10:
+                    import re
+                    sentences = re.split(r'(?<=[。！？！\.\!\?\n])', full_text)
+                    sentences = [s.strip() for s in sentences if s.strip()]
+                    # 合并过短的句子（少于15字）到前一句
+                    merged = []
+                    for s in sentences:
+                        if merged and len(s) < 15:
+                            merged[-1] = merged[-1] + s
+                        else:
+                            merged.append(s)
+                    paragraphs = [
+                        {
+                            "text": s,
+                            "role": "narrator",
+                            "emotion": "neutral",
+                            "speaker": "旁白"
+                        }
+                        for s in merged if len(s) > 5
+                    ]
+                    logger.info(f"[Chapter {chapter_id}] 从清洗文本拆分了 {len(paragraphs)} 个段落")
+                else:
+                    logger.warning(f"[Chapter {chapter_id}] 无有效文本，创建1个占位段落")
+                    paragraphs = [
+                        {
+                            "text": "本章内容暂时无法处理",
+                            "role": "narrator",
+                            "emotion": "neutral",
+                            "speaker": "旁白"
+                        }
+                    ]
 
             # 声音映射器
             voice_mapper = VoiceMapperService()
@@ -989,6 +1028,11 @@ def postprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
             chapter.audio_duration = result["duration_seconds"]
             chapter.audio_file_size = result["file_size"]
             chapter.updated_at = datetime.utcnow()
+            # 字幕信息（如果后处理器已设置）
+            if result.get("subtitle_path"):
+                chapter.subtitle_path = result["subtitle_path"]
+            if result.get("subtitle_url"):
+                chapter.subtitle_url = result["subtitle_url"]
             chapter.save()  # 直接保存
 
             # 更新书籍进度

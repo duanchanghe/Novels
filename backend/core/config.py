@@ -74,7 +74,7 @@ class Settings:
         self.DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
         self.DEEPSEEK_BASE_URL = os.getenv('DEEEPSEEK_BASE_URL', 'https://api.deepseek.com')
         self.DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
-        self.DEEPSEEK_MAX_TOKENS = int(os.getenv('DEEPSEEK_MAX_TOKENS', 8192))
+        self.DEEPSEEK_MAX_TOKENS = int(os.getenv('DEEPSEEK_MAX_TOKENS', 16384))
         self.DEEPSEEK_TEMPERATURE = float(os.getenv('DEEPSEEK_TEMPERATURE', 0.7))
 
         # MiniMax TTS API 配置
@@ -138,7 +138,7 @@ class Settings:
         self.DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY', '')
         self.DEEPSEEK_BASE_URL = os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com')
         self.DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
-        self.DEEPSEEK_MAX_TOKENS = int(os.getenv('DEEPSEEK_MAX_TOKENS', '8192'))
+        self.DEEPSEEK_MAX_TOKENS = int(os.getenv('DEEPSEEK_MAX_TOKENS', '16384'))
         self.DEEPSEEK_TEMPERATURE = float(os.getenv('DEEPSEEK_TEMPERATURE', '0.7'))
 
         # MiniMax TTS API 配置

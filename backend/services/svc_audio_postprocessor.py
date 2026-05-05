@@ -167,6 +167,25 @@ class AudioPostprocessorService:
                 storage,
             )
 
+            # ── 生成同步字幕（SRT 格式）──
+            srt_content = self._generate_srt(segment_info)
+            if srt_content:
+                srt_object_name = object_name.rsplit(".", 1)[0] + ".srt"
+                try:
+                    srt_data = srt_content.encode("utf-8")
+                    storage.upload_file(
+                        settings.MINIO_BUCKET_AUDIO,
+                        srt_object_name,
+                        srt_data,
+                        content_type="text/plain; charset=utf-8",
+                    )
+                    logger.info(f"字幕已上传: {srt_object_name}")
+                except Exception as e:
+                    logger.warning(f"字幕上传失败: {e}")
+                    srt_object_name = None
+            else:
+                srt_object_name = None
+
             # 更新章节数据库状态
             self._update_chapter_audio(
                 db=db,
@@ -175,6 +194,7 @@ class AudioPostprocessorService:
                 duration_seconds=int(len(normalized) / 1000),
                 file_size=len(output_data),
                 format=output_format,
+                subtitle_path=srt_object_name,
             )
 
             return {
@@ -183,6 +203,8 @@ class AudioPostprocessorService:
                 "file_size": len(output_data),
                 "quality": quality,
                 "format": output_format,
+                "subtitle_path": srt_object_name,
+                "subtitle_url": chapter.subtitle_url if srt_object_name else None,
             }
 
     def _update_chapter_audio(
@@ -193,29 +215,101 @@ class AudioPostprocessorService:
         duration_seconds: int,
         file_size: int,
         format: str = "mp3",
+        subtitle_path: str = None,
     ) -> None:
         """
         更新章节音频信息到数据库
 
         Args:
             db: 数据库会话
-            chapter_id: 章节 ID
+            chapter_id: 章节ID
             audio_file_path: 音频文件路径
             duration_seconds: 音频时长（秒）
             file_size: 文件大小（字节）
             format: 音频格式
+            subtitle_path: 字幕文件路径
         """
-        from core.models import Chapter, ChapterStatus
+        from core.models import Chapter
+        from services.svc_minio_storage import get_storage_service
+        from django.conf import settings
 
         chapter = db.query(Chapter).filter(id=chapter_id).first()
-        if chapter:
-            chapter.audio_file_path = audio_file_path
-            chapter.audio_duration = duration_seconds
-            chapter.audio_file_size = file_size
-            chapter.audio_format = format
-            chapter.status = ChapterStatus.DONE
-            db.commit()
-            logger.info(f"章节 {chapter_id} 音频信息已更新")
+        if not chapter:
+            logger.error(f"章节不存在: {chapter_id}")
+            return
+
+        chapter.audio_file_path = audio_file_path
+        chapter.audio_duration = duration_seconds
+        chapter.audio_file_size = file_size
+        chapter.audio_format = format
+        chapter.status = "DONE"
+
+        # 生成字幕 URL
+        if subtitle_path:
+            chapter.subtitle_path = subtitle_path
+            try:
+                storage = get_storage_service()
+                chapter.subtitle_url = storage.get_presigned_url(
+                    settings.MINIO_BUCKET_AUDIO,
+                    subtitle_path,
+                )
+            except Exception as e:
+                logger.warning(f"生成字幕URL失败: {e}")
+
+        db.commit()
+        logger.info(f"章节 {chapter_id} 音频信息已更新（字幕: {subtitle_path}）")
+
+    def _generate_srt(self, segment_info: List[Dict[str, Any]]) -> str:
+        """
+        从片段信息生成 SRT 格式字幕
+
+        Args:
+            segment_info: 片段信息列表，每项包含 text, role, duration_ms
+
+        Returns:
+            str: SRT 格式字幕内容
+        """
+        if not segment_info:
+            return ""
+
+        srt_lines = []
+        current_time_ms = 0
+
+        for idx, seg in enumerate(segment_info):
+            duration_ms = seg.get("duration_ms", 0)
+            text = seg.get("text", "").strip()
+            role = seg.get("role", "")
+
+            if not text:
+                current_time_ms += duration_ms
+                continue
+
+            # 时间戳格式: HH:MM:SS,mmm
+            start_ts = self._ms_to_srt_time(current_time_ms)
+            end_ts = self._ms_to_srt_time(current_time_ms + duration_ms)
+
+            # 角色前缀
+            display_text = f"【{role}】{text}" if role and role != "旁白" else text
+
+            srt_lines.append(str(idx + 1))
+            srt_lines.append(f"{start_ts} --> {end_ts}")
+            srt_lines.append(display_text)
+            srt_lines.append("")
+
+            current_time_ms += duration_ms
+
+        return "\n".join(srt_lines)
+
+    @staticmethod
+    def _ms_to_srt_time(ms: int) -> str:
+        """将毫秒转换为 SRT 时间格式 HH:MM:SS,mmm"""
+        hours = ms // 3600000
+        ms %= 3600000
+        minutes = ms // 60000
+        ms %= 60000
+        seconds = ms // 1000
+        milliseconds = ms % 1000
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d},{milliseconds:03d}"
 
     def _update_book_audio(
         self,
@@ -295,6 +389,8 @@ class AudioPostprocessorService:
                         "emotion": segment.emotion,
                         "pause_after": getattr(segment, "pause_hint", "normal"),
                         "duration_ms": len(audio),
+                        "text": segment.text_content,
+                        "role": segment.role or "旁白",
                     })
 
                 except Exception as e:
@@ -763,7 +859,7 @@ class AudioPostprocessorService:
             )
 
             # 计算完整音频时长（包括章节间的停顿）
-            # 每个章节后有 2500ms 停顿，最后一个章节后没有停顿
+            # 每个章节后有 2.5秒 停顿，最后一个章节后没有停顿
             total_duration_with_pauses = total_duration + (len(chapters) - 1) * 2500 if len(chapters) > 1 else total_duration
 
             # 生成带 ID3 标签和章节书签的版本（M4B）

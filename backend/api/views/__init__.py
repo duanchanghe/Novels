@@ -25,6 +25,7 @@ from .books import (
     BookRetryView,
     BookAudioView,
     BookDownloadView,
+    BookSubtitleView,
     BookDeleteView,
 )
 from .chapters import (

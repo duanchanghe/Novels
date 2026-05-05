@@ -65,6 +65,9 @@ class Chapter(models.Model):
     audio_file_size = models.BigIntegerField(blank=True, null=True, verbose_name="音频文件大小")
     audio_format = models.CharField(max_length=20, default="mp3", verbose_name="音频格式")
 
+    subtitle_url = models.URLField(max_length=1000, blank=True, null=True, verbose_name="字幕URL")
+    subtitle_path = models.CharField(max_length=1000, blank=True, null=True, verbose_name="字幕文件路径")
+
     total_segments = models.IntegerField(default=0, verbose_name="总片段数")
     completed_segments = models.IntegerField(default=0, verbose_name="已完成片段数")
     failed_segments = models.IntegerField(default=0, verbose_name="失败片段数")
@@ -124,6 +127,8 @@ class Chapter(models.Model):
             "audio_duration": self.audio_duration,
             "audio_file_size": self.audio_file_size,
             "audio_format": self.audio_format,
+            "subtitle_url": self.subtitle_url,
+            "subtitle_path": self.subtitle_path,
             "total_segments": self.total_segments,
             "completed_segments": self.completed_segments,
             "failed_segments": self.failed_segments,
