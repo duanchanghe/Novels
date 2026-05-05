@@ -163,7 +163,7 @@ class AudioPostprocessorService:
                 book_author,
                 chapter.title or f"第{chapter.chapter_index}章",
                 chapter.chapter_index,
-                book.cover_image if book else None,
+                book.cover_image_url if book else None,
                 storage,
             )
 
@@ -773,7 +773,7 @@ class AudioPostprocessorService:
                     book.id,
                     book.title,
                     book.author,
-                    book.cover_image,
+                    book.cover_image_url,
                     storage,
                     quality,
                 )

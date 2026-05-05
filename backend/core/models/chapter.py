@@ -104,6 +104,9 @@ class Chapter(models.Model):
 
     def to_dict(self):
         """转换为字典"""
+        # 获取完整的清洗后文本
+        full_cleaned_text = self._get_full_cleaned_text()
+
         return {
             "id": self.id,
             "book_id": self.book_id,
@@ -111,6 +114,7 @@ class Chapter(models.Model):
             "title": self.title,
             "raw_text": self.raw_text,
             "cleaned_text": self.cleaned_text,
+            "full_cleaned_text": full_cleaned_text,
             "analysis_result": self.analysis_result,
             "characters": self.characters,
             "status": self.status,
@@ -131,3 +135,30 @@ class Chapter(models.Model):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+    def _get_full_cleaned_text(self):
+        """
+        从 MinIO 获取完整的清洗后文本
+
+        DB 中 cleaned_text 存的是 MinIO 路径（chapters/{book_id}/{index}_cleaned.txt）
+        这里自动解析路径并从 MinIO 获取完整文本。
+        """
+        if not self.cleaned_text:
+            return None
+
+        # 如果 cleaned_text 不是路径（而是实际的文本内容），直接返回
+        if not self.cleaned_text.startswith("chapters/"):
+            return self.cleaned_text
+
+        # 从 MinIO 获取完整文本
+        try:
+            from services.svc_minio_storage import get_storage_service
+            storage = get_storage_service()
+            full_text = storage.download_chapter_text(
+                book_id=self.book_id,
+                chapter_index=self.chapter_index,
+            )
+            return full_text
+        except Exception:
+            # 如果获取失败，返回路径（用于调试）
+            return self.cleaned_text

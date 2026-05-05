@@ -86,7 +86,8 @@ def postprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
             # 更新书籍进度
             book.processed_chapters = (
                 db.query(Chapter)
-                .filter(book_id=book.id, status=ChapterStatus.DONE)
+                .filter(book_id=book.id)
+                .filter(status=ChapterStatus.DONE)
                 .count()
             )
 

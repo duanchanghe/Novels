@@ -222,7 +222,10 @@ class FileNotFoundError(StorageError):
 class ServiceError(DomainError):
     """服务层基础异常"""
 
-    def __init__(self, service_name: str, message: str, original_error: Exception = None):
+    def __init__(self, service_name: str = "Unknown", message: str = "", original_error: Exception = None):
+        if not message:
+            message = service_name
+            service_name = "Service"
         details = {"service": service_name}
         if original_error:
             details["original_error"] = str(original_error)

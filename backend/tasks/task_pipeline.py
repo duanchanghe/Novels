@@ -888,17 +888,17 @@ def synthesize_segment(self, segment_id: int) -> Dict[str, Any]:
             segment.audio_url = storage.get_presigned_url("books-audio", object_name)
             segment.audio_bytes_size = len(audio_data)
             segment.updated_at = datetime.utcnow()
+            segment.save()  # 直接保存
 
             # 更新章节进度
             if chapter:
                 chapter.completed_segments = (
                     db.query(AudioSegment)
-                    .filter(
-                        chapter_id=chapter.id,
-                        status=SegmentStatus.SUCCESS,
-                    )
+                    .filter(chapter_id=chapter.id)
+                    .filter(status=SegmentStatus.SUCCESS)
                     .count()
                 )
+                chapter.save()  # 直接保存
 
             db.commit()
 
@@ -917,6 +917,7 @@ def synthesize_segment(self, segment_id: int) -> Dict[str, Any]:
             segment.status = SegmentStatus.FAILED
             segment.error_message = error_msg
             segment.retry_count = (segment.retry_count or 0) + 1
+            segment.save()  # 直接保存
             db.commit()
 
             # 余额不足不重试
@@ -988,20 +989,16 @@ def postprocess_chapter(self, chapter_id: int) -> Dict[str, Any]:
             chapter.audio_duration = result["duration_seconds"]
             chapter.audio_file_size = result["file_size"]
             chapter.updated_at = datetime.utcnow()
+            chapter.save()  # 直接保存
 
             # 更新书籍进度
             book.processed_chapters = (
                 db.query(Chapter)
-                .filter(book_id=book.id, status=ChapterStatus.DONE)
+                .filter(book_id=book.id)
+                .filter(status=ChapterStatus.DONE)
                 .count()
             )
-
-            # 检查是否全部完成
-            total = db.query(Chapter).filter(book_id=book.id).count()
-            if book.processed_chapters >= total:
-                book.status = BookStatus.DONE
-
-            db.commit()
+            book.save()  # 直接保存
 
             logger.info(f"[Chapter {chapter_id}] 音频后处理完成")
             return {
@@ -1195,8 +1192,8 @@ def _try_publish_book(
 
         book_id = chapter.book_id
         total = db.query(Chapter).filter(book_id=book_id).count()
-        done = db.query(Chapter).filter(book_id=book_id, status=ChapterStatus.DONE).count()
-        failed = db.query(Chapter).filter(book_id=book_id, status=ChapterStatus.FAILED).count()
+        done = db.query(Chapter).filter(book_id=book_id).filter(status=ChapterStatus.DONE).count()
+        failed = db.query(Chapter).filter(book_id=book_id).filter(status=ChapterStatus.FAILED).count()
 
         # 所有章节都处于终态（DONE 或 FAILED）→ 触发发布
         if done + failed >= total:

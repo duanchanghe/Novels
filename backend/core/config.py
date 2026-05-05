@@ -91,6 +91,7 @@ class Settings:
         # 音频处理配置
         self.AUDIO_SAMPLE_RATE = int(os.getenv('AUDIO_SAMPLE_RATE', 44100))
         self.AUDIO_BITRATE = int(os.getenv('AUDIO_BITRATE', 192))
+        self.AUDIO_CROSSFADE_MS = int(os.getenv('AUDIO_CROSSFADE_MS', 20))
 
         # 日志配置
         self.LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')

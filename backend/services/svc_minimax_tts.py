@@ -434,8 +434,8 @@ class MiniMaxTTSService:
                             "pitch": int(float(emotion_params["pitch"]) * 100),
                         },
                         "audio_setting": {
-                            "sample_rate": 48000,
-                            "bitrate": 320000,
+                            "sample_rate": 32000,
+                            "bitrate": 128000,
                             "format": "mp3",
                             "channel": 1,
                         },

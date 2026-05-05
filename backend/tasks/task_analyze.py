@@ -88,11 +88,57 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             chapter.status = ChapterStatus.ANALYZING
             db.commit()
 
+            # ── 读取章节文本（优先 MinIO，回退 DB） ──
+            from services.svc_minio_storage import get_storage_service
+            storage = get_storage_service()
+            text = ""
+
+            # 策略1: cleaned_text 是 MinIO 路径 → 从 MinIO 读取
+            if chapter.cleaned_text and chapter.cleaned_text.startswith("chapters/"):
+                try:
+                    text = storage.download_chapter_text(
+                        book_id=chapter.book_id,
+                        chapter_index=chapter.chapter_index,
+                    )
+                    logger.debug(
+                        f"[Chapter {chapter_id}] 从 MinIO 读取文本: {len(text)} 字符"
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"[Chapter {chapter_id}] MinIO 读取失败，回退到 DB: {e}"
+                    )
+
+            # 策略2: cleaned_text 是实际文本内容（非路径）→ 直接使用
+            if not text and chapter.cleaned_text:
+                if not chapter.cleaned_text.startswith("chapters/"):
+                    text = chapter.cleaned_text
+                    logger.debug(
+                        f"[Chapter {chapter_id}] 使用 DB cleaned_text: {len(text)} 字符"
+                    )
+
+            # 策略3: 回退到 raw_text
+            if not text and chapter.raw_text:
+                text = chapter.raw_text
+                logger.debug(
+                    f"[Chapter {chapter_id}] 使用 DB raw_text: {len(text)} 字符"
+                )
+
+            if not text or len(text.strip()) < 10:
+                logger.warning(f"[Chapter {chapter_id}] 文本内容过短，跳过分析")
+                chapter.status = ChapterStatus.ANALYZED
+                chapter.analysis_result = {"paragraphs": [], "characters": []}
+                db.commit()
+                return {
+                    "chapter_id": chapter_id,
+                    "warning": "文本内容过短",
+                    "success": True,
+                }
+
             # 执行分析（具体逻辑在服务层实现）
             from services.svc_deepseek_analyzer import DeepSeekAnalyzerService
 
             analyzer = DeepSeekAnalyzerService()
-            result = analyzer.analyze_chapter(chapter.cleaned_text or chapter.raw_text)
+            result = analyzer.analyze_chapter(text)
 
             # 更新章节分析结果
             chapter.analysis_result = result

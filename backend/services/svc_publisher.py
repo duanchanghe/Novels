@@ -493,12 +493,12 @@ class PublisherService:
 
             # 获取封面
             cover_image = None
-            if book.cover_image:
+            if book.cover_image_url:
                 from services.svc_minio_storage import get_storage_service
                 storage = get_storage_service()
                 cover_image = storage.download_file(
                     settings.MINIO_BUCKET_EPUB,
-                    book.cover_image,
+                    book.cover_image_url,
                 )
 
             # 创建专辑
@@ -524,17 +524,29 @@ class PublisherService:
 
             for chapter in chapters:
                 try:
+                    # 从 MinIO 获取完整清洗后文本（用于生成字幕等）
+                    from services.svc_minio_storage import get_storage_service
+                    storage = get_storage_service()
+                    full_text = ""
+                    try:
+                        full_text = storage.download_chapter_text(
+                            book_id=chapter.book_id,
+                            chapter_index=chapter.chapter_index,
+                        )
+                    except Exception as text_err:
+                        logger.warning(
+                            f"获取章节文本失败 (book={chapter.book_id}, "
+                            f"chapter={chapter.chapter_index}): {text_err}"
+                        )
+
                     chapter_data = {
                         "id": chapter.id,
                         "title": chapter.title,
                         "index": chapter.chapter_index,
                         "duration": chapter.audio_duration,
                         "audio_file_path": chapter.audio_file_path,
+                        "text_content": full_text,
                     }
-
-                    # 获取音频流
-                    from services.svc_minio_storage import get_storage_service
-                    storage = get_storage_service()
 
                     audio_data = storage.download_file(
                         settings.MINIO_BUCKET_AUDIO,

@@ -38,10 +38,15 @@ class DjangoCompatDB:
         return DjangoQuerySetProxy(model)
     
     def add(self, obj):
-        pass  # Django ORM 不需要
+        """保存 Django 模型对象"""
+        if hasattr(obj, 'save') and callable(obj.save):
+            obj.save()
     
     def commit(self):
-        pass  # Django ORM 自动提交
+        """提交事务"""
+        from django.db import transaction
+        with transaction.atomic():
+            pass
     
     def refresh(self, obj):
         if hasattr(obj, 'refresh_from_db'):

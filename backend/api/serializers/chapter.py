@@ -46,6 +46,8 @@ class ChapterDetailSerializer(serializers.ModelSerializer):
     analysis_result = SafeJSONField(required=False, allow_null=True)
     characters = SafeJSONField(required=False, allow_null=True)
     progress_percentage = serializers.SerializerMethodField()
+    # cleaned_text 在 DB 中存的是 MinIO 路径，需要在序列化时获取完整文本
+    full_cleaned_text = serializers.SerializerMethodField()
 
     class Meta:
         model = Chapter
@@ -56,6 +58,33 @@ class ChapterDetailSerializer(serializers.ModelSerializer):
         if obj.total_segments == 0:
             return 0.0
         return round((obj.completed_segments / obj.total_segments) * 100, 2)
+
+    def get_full_cleaned_text(self, obj):
+        """
+        从 MinIO 获取完整的清洗后文本
+
+        DB 中 cleaned_text 存的是 MinIO 路径（chapters/{book_id}/{index}_cleaned.txt）
+        这里自动解析路径并从 MinIO 获取完整文本。
+        """
+        if not obj.cleaned_text:
+            return None
+
+        # 如果 cleaned_text 不是路径（而是实际的文本内容），直接返回
+        if not obj.cleaned_text.startswith("chapters/"):
+            return obj.cleaned_text
+
+        # 从 MinIO 获取完整文本
+        try:
+            from services.svc_minio_storage import get_storage_service
+            storage = get_storage_service()
+            full_text = storage.download_chapter_text(
+                book_id=obj.book_id,
+                chapter_index=obj.chapter_index,
+            )
+            return full_text
+        except Exception:
+            # 如果获取失败，返回路径（用于调试）
+            return obj.cleaned_text
 
 
 class ChapterCreateSerializer(serializers.Serializer):
