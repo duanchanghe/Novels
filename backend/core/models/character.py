@@ -66,6 +66,18 @@ class Character(models.Model):
     # 统计数据
     dialogue_count = models.IntegerField(default=0, verbose_name="对话数量")
 
+    # 章节出现信息（合并各章分析数据）
+    appears_in_chapters = models.JSONField(default=list, blank=True, verbose_name="出现章节序号")
+
+    # 年龄推断
+    age_group = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        verbose_name="年龄段",
+        help_text="child/youth/adult/elderly"
+    )
+
     # 关联信息
     book = models.ForeignKey(
         "Book",
@@ -125,6 +137,81 @@ class Character(models.Model):
     def __str__(self):
         return f"{self.name} ({self.get_gender_display()})"
 
+    @classmethod
+    def save_chapter_characters(cls, chapter, characters_data: list) -> list["Character"]:
+        """
+        从章节分析结果批量保存/更新角色（合并多章节同名角色）。
+
+        Args:
+            chapter: Chapter 实例
+            characters_data: 角色 dict 列表
+
+        Returns:
+            list[Character]: 创建/更新的 Character 实例列表
+        """
+        chapter_index = chapter.chapter_index
+        book_id = chapter.book_id
+        instances = []
+
+        for data in characters_data:
+            name = data.get("name", "")
+            if not name or name in ("旁白", "narrator", "未识别", "未知"):
+                continue
+
+            char, created = cls.objects.get_or_create(
+                book_id=book_id,
+                name=name,
+                defaults={
+                    "aliases": data.get("aliases") or [],
+                    "gender": data.get("gender", "unknown"),
+                    "role_type": data.get("role_type", "supporting"),
+                    "dialogue_count": data.get("dialogue_count", 0),
+                    "description": data.get("description", ""),
+                    "personality": data.get("personality", ""),
+                    "speech_style": data.get("speech_style", ""),
+                    "voice_description": data.get("voice_description", ""),
+                    "emotions": data.get("emotions") or [],
+                    "source": "deepseek",
+                    "age_group": data.get("age_group", ""),
+                    "appears_in_chapters": [chapter_index],
+                },
+            )
+
+            if not created:
+                # 合并别名
+                new_aliases = set(char.aliases or [])
+                new_aliases.update(data.get("aliases") or [])
+                char.aliases = list(new_aliases)
+
+                # 合并情感
+                new_emotions = set(char.emotions or [])
+                new_emotions.update(data.get("emotions") or [])
+                char.emotions = list(new_emotions)
+
+                # 累计对话数
+                char.dialogue_count = (char.dialogue_count or 0) + data.get("dialogue_count", 0)
+
+                # 补充描述（优先非空）
+                if data.get("description") and not char.description:
+                    char.description = data["description"]
+                if data.get("personality") and not char.personality:
+                    char.personality = data["personality"]
+                if data.get("speech_style") and not char.speech_style:
+                    char.speech_style = data["speech_style"]
+                if data.get("voice_description") and not char.voice_description:
+                    char.voice_description = data["voice_description"]
+
+                # 记录出现章节
+                appears = set(char.appears_in_chapters or [])
+                appears.add(chapter_index)
+                char.appears_in_chapters = sorted(appears)
+
+                char.save()
+
+            instances.append(char)
+
+        return instances
+
     def to_dict(self):
         """转换为字典"""
         return {
@@ -141,6 +228,7 @@ class Character(models.Model):
             "voice_description": self.voice_description,
             "emotions": self.emotions or [],
             "dialogue_count": self.dialogue_count,
+            "age_group": self.age_group,
             "usage_count": self.usage_count,
             "book_id": self.book_id,
             "voice_profile_id": self.voice_profile_id,

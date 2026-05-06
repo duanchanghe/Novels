@@ -140,6 +140,22 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             analyzer = DeepSeekAnalyzerService()
             result = analyzer.analyze_chapter(text)
 
+            # ── 保存段落到 Paragraph 模型 ──
+            from core.models.paragraph import Paragraph
+            paragraphs_data = result.get("paragraphs", [])
+            Paragraph.save_chapter_paragraphs(chapter, paragraphs_data)
+            logger.info(
+                f"[Chapter {chapter_id}] 已保存 {len(paragraphs_data)} 个段落到 Paragraph 模型"
+            )
+
+            # ── 保存角色到 Character 模型 ──
+            from core.models.character import Character
+            characters_data = result.get("characters", [])
+            Character.save_chapter_characters(chapter, characters_data)
+            logger.info(
+                f"[Chapter {chapter_id}] 已保存 {len(characters_data)} 个角色"
+            )
+
             # 更新章节分析结果
             chapter.analysis_result = result
             chapter.characters = result.get("characters", [])

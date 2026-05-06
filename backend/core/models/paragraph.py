@@ -90,6 +90,9 @@ class Paragraph(models.Model):
     # 多音字修正
     polyphone_fixes = models.JSONField(default=list, blank=True, verbose_name="多音字修正")
 
+    # 语音特征（从旁白提取的语音状态，如嘶哑、低沉、颤抖）
+    voice_context = models.CharField(max_length=100, blank=True, verbose_name="语音特征")
+
     # 特殊标记
     special_markers = models.JSONField(default=list, blank=True, verbose_name="特殊标记")
     is_ancient_text = models.BooleanField(default=False, verbose_name="古文")
@@ -123,6 +126,89 @@ class Paragraph(models.Model):
         text_preview = self.text[:30] if self.text else ""
         return f"第{self.paragraph_index}段 [{speaker}]: {text_preview}..."
 
+    @classmethod
+    def from_dict(cls, chapter, data: dict) -> "Paragraph":
+        """
+        从分析结果字典创建 Paragraph 实例
+
+        解析 DeepSeek 返回的段落 dict，映射到 Paragraph 模型字段。
+
+        Args:
+            chapter: Chapter 实例
+            data: 段落字典，包含 paragraph_index, text, type, speaker, emotion 等
+
+        Returns:
+            Paragraph: 未保存的 Paragraph 实例
+        """
+        # 解析 emotion 字段（格式：情感_强度，如 "愤怒_强"）
+        emotion_raw = data.get("emotion") or ""
+        emotion = ""
+        intensity = ""
+        if "_" in emotion_raw:
+            parts = emotion_raw.split("_", 1)
+            emotion = parts[0].strip()
+            intensity = parts[1].strip()
+        elif emotion_raw:
+            emotion = emotion_raw.strip()
+
+        # 确定段落类型
+        para_type = data.get("type", "narration")
+
+        # 确定说话人及是否旁白
+        speaker = data.get("speaker", "") or ""
+        is_narrator = speaker in ("", "旁白", "narrator", "未识别", "未知")
+
+        # 解析 special_markers → 布尔标记
+        markers = data.get("special_markers") or []
+        is_ancient_text = "古文朗读" in markers or "古文" in markers
+        is_poetry = "诗词" in markers
+        is_inner_thought = "内心独白" in markers
+        is_system_prompt = "系统提示" in markers
+
+        return cls(
+            chapter=chapter,
+            paragraph_index=data.get("paragraph_index", 0),
+            text=data.get("text", ""),
+            paragraph_type=para_type,
+            speaker=speaker,
+            is_narrator=is_narrator,
+            emotion=emotion or None,
+            emotion_intensity=intensity or None,
+            polyphone_fixes=data.get("polyphone_fixes") or [],
+            voice_context=data.get("voice_context", ""),
+            special_markers=markers,
+            is_ancient_text=is_ancient_text,
+            is_poetry=is_poetry,
+            is_inner_thought=is_inner_thought,
+            is_system_prompt=is_system_prompt,
+        )
+
+    @classmethod
+    def save_chapter_paragraphs(cls, chapter, paragraphs_data: list) -> list["Paragraph"]:
+        """
+        批量保存章节段落
+
+        删除章节原有段落，根据分析结果批量创建新段落。
+
+        Args:
+            chapter: Chapter 实例
+            paragraphs_data: 段落字典列表
+
+        Returns:
+            list[Paragraph]: 创建的 Paragraph 实例列表
+        """
+        # 删除旧段落
+        cls.objects.filter(chapter=chapter).delete()
+
+        # 创建新段落
+        instances = []
+        for data in paragraphs_data:
+            para = cls.from_dict(chapter, data)
+            para.save()
+            instances.append(para)
+
+        return instances
+
     @property
     def emotion_with_intensity(self):
         """获取带强度的情感描述"""
@@ -146,6 +232,7 @@ class Paragraph(models.Model):
             "emotion_intensity": self.emotion_intensity,
             "emotion_with_intensity": self.emotion_with_intensity,
             "polyphone_fixes": self.polyphone_fixes or [],
+            "voice_context": self.voice_context or "",
             "special_markers": self.special_markers or [],
             "is_ancient_text": self.is_ancient_text,
             "is_poetry": self.is_poetry,

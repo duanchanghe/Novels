@@ -338,6 +338,7 @@ class ChapterAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
         "analysis_result",   # 分析结果（JSON格式，由AI生成）
+        "paragraphs_display", # 段落列表（自定义方法）
     ]
 
     ordering = ["book", "chapter_index"]  # 按书籍分组，再按章节序号排序
@@ -413,7 +414,14 @@ class ChapterAdmin(admin.ModelAdmin):
     book_title.short_description = "所属书籍"
 
     def paragraph_count(self, obj):
-        """获取段落数量"""
+        """获取段落数量（优先从 Paragraph 模型读取）"""
+        try:
+            from core.models.paragraph import Paragraph
+            count = Paragraph.objects.filter(chapter=obj).count()
+            if count > 0:
+                return count
+        except Exception:
+            pass
         result = obj.analysis_result
         if result and isinstance(result, dict):
             paragraphs = result.get("paragraphs", [])
@@ -422,7 +430,14 @@ class ChapterAdmin(admin.ModelAdmin):
     paragraph_count.short_description = "段落数"
 
     def character_count(self, obj):
-        """获取角色数量"""
+        """获取角色数量（从 Character 模型统计）"""
+        try:
+            from core.models.character import Character
+            count = Character.objects.filter(book_id=obj.book_id).count()
+            if count > 0:
+                return count
+        except Exception:
+            pass
         result = obj.analysis_result
         if result and isinstance(result, dict):
             characters = result.get("characters", [])
@@ -431,12 +446,23 @@ class ChapterAdmin(admin.ModelAdmin):
     character_count.short_description = "角色数"
 
     def paragraphs_display(self, obj):
-        """展示段落列表"""
-        result = obj.analysis_result
-        if not result or not isinstance(result, dict):
-            return "-"
-        
-        paragraphs = result.get("paragraphs", [])
+        """展示段落列表（优先从 Paragraph 模型读取）"""
+        try:
+            from core.models.paragraph import Paragraph
+            db_paragraphs = list(
+                Paragraph.objects.filter(chapter=obj).order_by("paragraph_index")
+            )
+            if db_paragraphs:
+                paragraphs = [p.to_dict() for p in db_paragraphs]
+            else:
+                paragraphs = []
+        except Exception:
+            paragraphs = []
+
+        if not paragraphs:
+            result = obj.analysis_result
+            if result and isinstance(result, dict):
+                paragraphs = result.get("paragraphs", [])
         if not paragraphs:
             return "-"
         
@@ -1520,3 +1546,86 @@ class SoundEffectCollectionItemAdmin(admin.ModelAdmin):
     def sound_effect_name(self, obj):
         return obj.sound_effect.name if obj.sound_effect else "-"
     sound_effect_name.short_description = "音效"
+
+
+# ===========================================
+# Paragraph（段落）
+# ===========================================
+
+@admin.register(Paragraph)
+class ParagraphAdmin(admin.ModelAdmin):
+    """段落管理"""
+
+    list_display = [
+        "id",
+        "chapter_info",
+        "paragraph_index",
+        "text_preview",
+        "paragraph_type",
+        "speaker",
+        "emotion_display",
+        "created_at",
+    ]
+    list_filter = [
+        "paragraph_type",
+        "emotion",
+        "emotion_intensity",
+        "is_narrator",
+        "is_ancient_text",
+        "is_poetry",
+        "is_inner_thought",
+        "is_system_prompt",
+    ]
+    search_fields = [
+        "text",
+        "speaker",
+    ]
+    ordering = ["chapter", "paragraph_index"]
+    list_select_related = ["chapter"]
+    list_per_page = 50
+
+    fieldsets = [
+        ("关联信息", {
+            "fields": ["chapter", "paragraph_index"],
+        }),
+        ("内容信息", {
+            "fields": ["text", "paragraph_type"],
+        }),
+        ("说话人信息", {
+            "fields": ["speaker", "is_narrator"],
+        }),
+        ("情感信息", {
+            "fields": ["emotion", "emotion_intensity"],
+        }),
+        ("多音字与特殊标记", {
+            "fields": [
+                "polyphone_fixes",
+                "special_markers",
+                "is_ancient_text",
+                "is_poetry",
+                "is_inner_thought",
+                "is_system_prompt",
+            ],
+        }),
+        ("时间戳", {
+            "fields": ["created_at"],
+        }),
+    ]
+    readonly_fields = ["created_at"]
+
+    def chapter_info(self, obj):
+        return f"#{obj.chapter.chapter_index} {obj.chapter.title or ''}"
+    chapter_info.short_description = "章节"
+    chapter_info.admin_order_field = "chapter__chapter_index"
+
+    def text_preview(self, obj):
+        return obj.text[:60] + ("..." if len(obj.text) > 60 else "")
+    text_preview.short_description = "内容预览"
+
+    def emotion_display(self, obj):
+        if obj.emotion:
+            return obj.emotion_with_intensity
+        return "-"
+    emotion_display.short_description = "情感"
+
+

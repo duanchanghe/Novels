@@ -544,17 +544,62 @@ class DeepSeekAnalyzerService:
 【分析任务】
 1. 按段落编号
 2. 判断段落类型（旁白/对话/混合）
-3. 识别说话人，合并角色别名（如"张兄"、"三哥"→张三）
+3. 识别说话人：每段对话的说话者和被提及者，注意不同角色对同一人可能用不同称呼（如张三：A叫"张兄"、B叫"三哥"、C叫"三弟"、D直呼"张三"），全部合并到统一角色名下
 4. 判断对话段落的情感（平静/高兴/悲伤/愤怒/紧张/惊讶/温柔/严肃/冷漠/嘲讽）及强度（弱/中/强）
 5. 识别多音字并给出读音
 6. 混合段落拆分（旁白+对话拆分为独立段落）
 7. 识别特殊标记（古文/诗词/内心独白/系统提示）
-8. 推断角色性别、性格特征、说话风格
+8. 推断角色性别、年龄段（child/youth/adult/elderly）、性格特征、说话风格
+
+【角色性格分析方法】
+对每个角色，通过以下线索综合推断性格和说话风格：
+
+（1）分析对白内容特征：
+- 用词习惯：书面语还是口语？文雅还是粗俗？敬语多还是命令多？
+- 句式特点：陈述多还是反问多？简洁还是啰嗦？
+- 语气助词：是否常用"啊、呀、嘛、呢、罢了"等？
+- 口头禅：是否有固定口头禅或常用语？
+- 话题偏好：常谈论什么主题？
+
+（2）分析情感表现：
+- 情感波动范围：情绪变化大还是稳定？
+- 常出现的情绪类型有哪些？
+- 情绪表达是直接外露还是压抑内敛？
+
+（3）分析人际关系：
+- 对不同对象（上级/平级/下级）说话方式是否不同？
+- 是否尊重他人？是否傲慢？
+- 用称呼反映关系
+
+（4）性格特征描述建议：
+- 外向/内向、热情/冷淡、冲动/稳重、自信/自卑等
+- 通过具体行为或引用来支撑判断
+
+（5）说话风格描述建议：
+- 语速（快/慢/适中）、音量（高/低/适中）
+- 语调变化特点（平稳/抑扬顿挫）
+- 是否常用修辞、歇后语、方言等
 
 【重要】情感标注规则：
 - 情感只标注在【对话段落】上，旁白段落无情感
 - 每个对话段落只能有一个情感
 - 格式："情感_强度"，如"愤怒_强"、"温柔_弱"
+
+【混合段落处理规则（关键）】
+对于旁白+对话混合的段落（如"她嘶哑地吼道："你疯了！""），采用以下策略：
+
+策略A — 若前后情感一致，拆为独立段落：
+  {"type": "narration", "text": "她嘶哑地吼道："},
+  {"type": "dialogue", "text": "你疯了！", "speaker": "她", "emotion": "愤怒_强"}
+
+策略B — 若旁白描写了语音特征（嘶哑、压低声音、颤抖等），拆分时**对话段落需承接旁白的情感强度**，
+  同时将语音特征写入 special_markers 供 TTS 参考：
+  {"type": "mixed", ..., "voice_context": "嘶哑"},
+  {"type": "dialogue", ..., "emotion": "愤怒_强", "voice_context": "嘶哑"}
+
+策略C — 复杂混合句（旁白→对话→旁白→对话），按语义块拆分为多个独立段落。
+
+目标：确保 TTS 合成时，对话的情感强度和语音特征与旁白描写一致。
 
 【中文网络小说特色】
 - 网络小说特有称呼：道兄、前辈、宗主、仙尊、魔帝等
@@ -570,6 +615,7 @@ class DeepSeekAnalyzerService:
       "type": "narration|dialogue|mixed",
       "speaker": "旁白|角色名",
       "emotion": "情感_强度",  // 仅对话段落有，旁白为null
+      "voice_context": "嘶哑|低沉|颤抖|平静等",  // 从旁白提取的语音特征，TTS合成参考
       "polyphone_fixes": [["字","拼音"]],
       "special_markers": ["古文朗读"]  // 可选
     }}
@@ -581,9 +627,11 @@ class DeepSeekAnalyzerService:
       "gender": "male|female|unknown",
       "role_type": "主角|配角|反派|旁白",
       "dialogue_count": 5,
-      "description": "角色外貌、身份、背景（20字内）",
-      "personality": "性格特征",
-      "speech_style": "说话风格"
+      "description": "角色外貌、身份、背景介绍（简洁明确）",
+      "personality": "性格特征（通过对白和情节推断，如急躁易怒、温婉贤淑、老谋深算等）",
+      "speech_style": "说话风格（基于对白分析，如语速快/慢、用词文雅/粗俗、语气强势/温和、口头禅等）",
+      "voice_description": "适合该角色的声音描述（如'年轻清脆女声'、'低沉威严男声'）",
+      "age_group": "child|youth|adult|elderly"
     }}
   ],
   "statistics": {{
@@ -595,6 +643,83 @@ class DeepSeekAnalyzerService:
 
 待分析文本：
 {text}"""
+
+    @staticmethod
+    def build_enhanced_role_list(characters_data: list) -> str:
+        """
+        构建增强角色列表字符串（含别名和其他角色特征），供提示词使用。
+
+        从已分析的章节角色数据中构建，格式如：
+        张三（别名：张兄、三哥，性别：男，年龄：adult，性格：急躁易怒，说话风格：语速快、语气强硬）
+        李四（别名：四哥，性别：女，年龄：youth，性格：温婉贤淑，说话风格：语速慢、语气温和）
+
+        Args:
+            characters_data: 角色 dict 列表，每项含 name、aliases、gender、
+                            age_group、description、personality、speech_style 等
+
+        Returns:
+            str: 格式化后的角色列表
+        """
+        if not characters_data:
+            return "未知"
+
+        parts = []
+        for char in characters_data:
+            name = char.get("name", "")
+            if not name or name in ("旁白", "narrator", "未识别", "未知"):
+                continue
+
+            info_parts = []
+
+            # 别名
+            aliases = char.get("aliases") or []
+            alias_set = set()
+            for a in aliases:
+                a = a.strip()
+                if a and a != name:
+                    alias_set.add(a)
+            if alias_set:
+                alias_str = "、".join(sorted(alias_set, key=len, reverse=True))
+                info_parts.append(f"别名：{alias_str}")
+
+            # 性别
+            gender = char.get("gender", "")
+            if gender and gender not in ("", "unknown"):
+                gender_cn = {"male": "男", "female": "女"}.get(gender, gender)
+                info_parts.append(f"性别：{gender_cn}")
+
+            # 年龄段
+            age = char.get("age_group", "")
+            if age:
+                age_cn = {"child": "儿童", "youth": "青年", "adult": "成年", "elderly": "老年"}.get(age, age)
+                info_parts.append(f"年龄：{age_cn}")
+
+            # 性格
+            personality = char.get("personality", "")
+            if personality:
+                info_parts.append(f"性格：{personality}")
+
+            # 说话风格
+            speech_style = char.get("speech_style", "")
+            if speech_style:
+                info_parts.append(f"说话：{speech_style}")
+
+            # 声音描述
+            voice_desc = char.get("voice_description", "")
+            if voice_desc:
+                info_parts.append(f"声线：{voice_desc}")
+
+            # 描述
+            description = char.get("description", "")
+            if description:
+                info_parts.append(f"简介：{description}")
+
+            if info_parts:
+                parts.append(f"{name}（{'，'.join(info_parts)}）")
+            else:
+                parts.append(name)
+
+        return "，".join(parts) if parts else "未知"
 
     def __init__(self, use_cache: bool = True):
         self.api_key = settings.DEEPSEEK_API_KEY
@@ -746,7 +871,7 @@ class DeepSeekAnalyzerService:
     async def analyze_text(
         self,
         text: str,
-        role_list: List[str] = None,
+        role_list=None,
         use_full_analysis: bool = True,
     ) -> Dict[str, Any]:
         """
@@ -818,7 +943,7 @@ class DeepSeekAnalyzerService:
             _cost_stats.add_error()
             raise DeepSeekApiError(f"DeepSeek 响应 JSON 解析失败: {e}")
 
-    async def _full_analysis(self, text: str, role_list: List[str] = None) -> Dict[str, Any]:
+    async def _full_analysis(self, text: str, role_list=None) -> Dict[str, Any]:
         """
         完整分析（单次 API 调用）
 
@@ -836,10 +961,11 @@ class DeepSeekAnalyzerService:
 
         if len(chunks) == 1:
             # 短文本，单次调用
+            role_str = role_list if isinstance(role_list, str) else (", ".join(role_list) if role_list else "未知")
             result = await self._call_deepseek(
                 self.FULL_ANALYSIS_PROMPT.format(
                     text=text,
-                    role_list=", ".join(role_list) if role_list else "未知",
+                    role_list=role_str,
                 )
             )
             
@@ -859,10 +985,11 @@ class DeepSeekAnalyzerService:
             for i, chunk in enumerate(chunks):
                 logger.info(f"分析文本片段 {i + 1}/{len(chunks)}")
                 known_roles = list(all_characters.keys()) if all_characters else role_list
+                role_str = known_roles if isinstance(known_roles, str) else (", ".join(known_roles) if known_roles else "未知")
                 result = await self._call_deepseek(
                     self.FULL_ANALYSIS_PROMPT.format(
                         text=chunk,
-                        role_list=", ".join(known_roles) if known_roles else "未知",
+                        role_list=role_str,
                     )
                 )
 
@@ -1018,6 +1145,93 @@ class DeepSeekAnalyzerService:
                 })
         return dialogues
 
+    @staticmethod
+    def _infer_gender_from_name(name: str) -> str:
+        """
+        根据中文称呼推断性别（作为 DeepSeek 未返回 gender 时的兜底）
+
+        优先级：男称复合词 > 女称复合词 > 男称单字 > 女称单字
+        复合词优先避免"伯爵夫人"含"伯"误判男、"二姐夫"含"姐"误判女。
+        """
+        if not name:
+            return "unknown"
+
+        male_word = ["先生", "少爷", "公子", "老爷", "大爷", "大叔",
+                     "大哥", "老弟", "兄弟", "姐夫", "妹夫", "姑爷",
+                     "师父", "道长", "师叔", "师伯", "师哥", "师弟", "师祖",
+                     "爷爷", "外公", "侄儿", "儿子", "孙子"]
+        female_word = ["夫人", "太太", "小姐", "公主", "仙女", "巫女", "女士",
+                       "大妈", "大娘", "师太", "师娘", "姥姥", "外婆",
+                       "妻子", "娘子", "闺女", "侄女", "甥女", "外甥女", "女儿",
+                       "大姐", "二姐", "三姐", "小妹", "妹妹", "姐姐",
+                       "奶奶", "婆婆"]
+        male_char = ["爷", "哥", "弟", "爹", "爸", "叔", "伯", "兄", "郎", "君", "汉", "甥"]
+        female_char = ["妹", "女", "娘", "妈", "嫂", "婶", "姑", "婆", "奶"]
+
+        for w in sorted(male_word, key=len, reverse=True):
+            if w in name:
+                return "male"
+        for w in sorted(female_word, key=len, reverse=True):
+            if w in name:
+                return "female"
+        for c in male_char:
+            if c in name:
+                return "male"
+        for c in female_char:
+            if c in name:
+                return "female"
+        return "unknown"
+
+    @staticmethod
+    def _infer_age_group_from_name(name: str) -> str:
+        """
+        根据中文称呼推断年龄段，辅助匹配声线。
+
+        年龄段: child(儿童) / youth(青少年/青年) / adult(成年/中年) / elderly(老年)
+        """
+        if not name:
+            return ""
+
+        # 老年
+        elderly = ["老爷爷", "老太太", "老婆婆", "老大爷", "老大娘",
+                   "老伯", "老奶奶", "老人家", "老夫人"]
+        # 儿童/少年
+        child = ["小朋友", "小宝宝", "小孩子", "小女孩", "小男孩",
+                 "小丫头", "小弟弟", "小妹妹", "小屁孩"]
+        # 青年
+        youth = ["小哥", "小姐姐", "小伙子", "年轻人", "姑娘",
+                 "少女", "少年", "少爷", "王子",
+                 "丫头", "小弟", "小妹", "小妮", "小生"]
+        # 成年/中年
+        adult = ["先生", "太太", "夫人", "女士", "大叔", "大姐",
+                 "大哥", "大嫂", "嫂子", "老弟",
+                 "师父", "师太", "道长", "和尚",
+                 "老爷", "君", "小姐", "公主"]
+
+        for w in sorted(elderly, key=len, reverse=True):
+            if w in name:
+                return "elderly"
+        for w in sorted(child, key=len, reverse=True):
+            if w in name:
+                return "child"
+        for w in sorted(youth, key=len, reverse=True):
+            if w in name:
+                return "youth"
+        for w in sorted(adult, key=len, reverse=True):
+            if w in name:
+                return "adult"
+
+        # 单字推断
+        if "老" in name and "小" not in name:
+            return "elderly"
+        if "小" in name:
+            return "youth"
+        if "少" in name:
+            return "youth"
+        if "老" in name:
+            return "elderly"
+        return ""
+
     def _merge_role_aliases(self, result: Dict[str, Any]) -> Dict[str, Any]:
         """
         合并角色别名
@@ -1068,6 +1282,12 @@ class DeepSeekAnalyzerService:
                     "aliases": [],
                     "dialogue_count": 0,
                     "emotions": set(),
+                    "gender": "unknown",
+                    "age_group": "",
+                    "description": "",
+                    "personality": "",
+                    "speech_style": "",
+                    "voice_description": "",
                 }
 
             # 合并统计
@@ -1079,6 +1299,30 @@ class DeepSeekAnalyzerService:
             for emotion in char.get("emotions", []):
                 merged_characters[canonical]["emotions"].add(emotion)
 
+            # 合并描述信息（优先非空）
+            cc = merged_characters[canonical]
+            if char.get("gender") and char["gender"] != "unknown" and cc["gender"] == "unknown":
+                cc["gender"] = char["gender"]
+            # 从称呼推断性别（兜底）
+            if cc["gender"] in ("", "unknown"):
+                inferred = self._infer_gender_from_name(canonical)
+                if inferred != "unknown":
+                    cc["gender"] = inferred
+            if char.get("description") and not cc["description"]:
+                cc["description"] = char["description"]
+            if char.get("personality") and not cc["personality"]:
+                cc["personality"] = char["personality"]
+            if char.get("speech_style") and not cc["speech_style"]:
+                cc["speech_style"] = char["speech_style"]
+            if char.get("voice_description") and not cc["voice_description"]:
+                cc["voice_description"] = char["voice_description"]
+            if char.get("age_group") and not cc["age_group"]:
+                cc["age_group"] = char["age_group"]
+            if cc["age_group"] in ("", None):
+                inferred_age = self._infer_age_group_from_name(canonical)
+                if inferred_age:
+                    cc["age_group"] = inferred_age
+
         # 转换为列表并清理
         final_characters = []
         for name, char_data in merged_characters.items():
@@ -1089,7 +1333,7 @@ class DeepSeekAnalyzerService:
         result["characters"] = final_characters
         return result
 
-    def analyze_chapter(self, text: str, role_list: List[str] = None) -> Dict[str, Any]:
+    def analyze_chapter(self, text: str, role_list=None) -> Dict[str, Any]:
         """
         同步分析章节（用于 Celery 任务）
 
@@ -1173,6 +1417,12 @@ class DeepSeekAnalyzerService:
                     "name": canonical,
                     "dialogue_count": 0,
                     "emotions": set(),
+                    "gender": "unknown",
+                    "age_group": "",
+                    "description": "",
+                    "personality": "",
+                    "speech_style": "",
+                    "voice_description": "",
                 }
 
             characters[canonical]["dialogue_count"] += 1
@@ -1187,6 +1437,16 @@ class DeepSeekAnalyzerService:
         result = []
         for name, data in characters.items():
             data["emotions"] = list(data["emotions"])
+            # 从称呼推断性别（兜底）
+            if data["gender"] in ("", "unknown"):
+                inferred = self._infer_gender_from_name(name)
+                if inferred != "unknown":
+                    data["gender"] = inferred
+            # 从称呼推断年龄（兜底）
+            if not data.get("age_group"):
+                inferred_age = self._infer_age_group_from_name(name)
+                if inferred_age:
+                    data["age_group"] = inferred_age
             result.append(data)
 
         return result
@@ -1318,7 +1578,7 @@ class DeepSeekAnalyzerService:
             logger.error(f"同步 DeepSeek API 调用异常: {type(e).__name__}: {e}")
             raise DeepSeekApiError(f"DeepSeek API 调用失败: {e}")
 
-    def _full_analysis_sync(self, text: str, role_list: List[str] = None) -> Dict[str, Any]:
+    def _full_analysis_sync(self, text: str, role_list=None) -> Dict[str, Any]:
         """
         同步完整分析（用于 Celery ForkPoolWorker 环境）
 
@@ -1334,10 +1594,11 @@ class DeepSeekAnalyzerService:
 
         if len(chunks) == 1:
             # 短文本，单次调用
+            role_str = role_list if isinstance(role_list, str) else (", ".join(role_list) if role_list else "未知")
             result = self._call_deepseek_sync(
                 self.FULL_ANALYSIS_PROMPT.format(
                     text=text,
-                    role_list=", ".join(role_list) if role_list else "未知",
+                    role_list=role_str,
                 )
             )
             _cost_stats.add(tokens=len(text) // 4, cost=len(text) // 4 * self.input_price / 1000)
@@ -1351,10 +1612,11 @@ class DeepSeekAnalyzerService:
             for i, chunk in enumerate(chunks):
                 logger.info(f"分析文本片段 {i + 1}/{len(chunks)}")
                 known_roles = list(all_characters.keys()) if all_characters else role_list
+                role_str = known_roles if isinstance(known_roles, str) else (", ".join(known_roles) if known_roles else "未知")
                 result = self._call_deepseek_sync(
                     self.FULL_ANALYSIS_PROMPT.format(
                         text=chunk,
-                        role_list=", ".join(known_roles) if known_roles else "未知",
+                        role_list=role_str,
                     )
                 )
 

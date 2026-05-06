@@ -203,11 +203,15 @@ class ChapterDomainService:
     @staticmethod
     def create_analyzed_event(chapter: ChapterModel) -> ChapterAnalyzedEvent:
         """创建章节分析完成事件"""
+        # 统计本章角色数
+        char_count = len(chapter.characters) if chapter.characters else 0
+        if char_count == 0:
+            char_count = len(chapter.characters) if chapter.characters else 0
         return ChapterAnalyzedEvent(
             aggregate_id=chapter.id,
             book_id=chapter.book_id,
             chapter_index=chapter.chapter_index,
-            character_count=len(chapter.characters) if chapter.characters else 0,
+            character_count=char_count,
         )
 
     @staticmethod
