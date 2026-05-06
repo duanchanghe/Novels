@@ -314,12 +314,42 @@ networks:
     driver: bridge
 
 # ===========================================
-# Volumes
+# Volumes (bind mounts to local directories)
 # ===========================================
 volumes:
   postgres-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/postgres
   redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/redis
   minio-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/minio
   audiobook-media:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/media
   audiobook-logs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/logs
   audiobook-books:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./data/books

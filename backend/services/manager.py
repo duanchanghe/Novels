@@ -1,146 +1,74 @@
-# ===========================================
-# Service Manager
-# ===========================================
-
 """
-Unified service manager for dependency injection and lifecycle management.
-
-Provides a central registry for all services with lazy initialization
-and dependency injection support.
+Service Manager - 服务生命周期管理
 """
 
 import logging
-from typing import Dict, Type, Optional, Any
-from functools import lru_cache
-
-from .base import (
-    BaseService,
-    ServiceType,
-    ServiceResult,
-    IStorageService,
-    IEpubParserService,
-    ITextProcessorService,
-    IAnalyzerService,
-    ITTSService,
-    IAudioPostprocessorService,
-    IVoiceMapperService,
-    IFileWatcherService,
-    IPublisherService,
-)
-
+from typing import Dict, Optional, Any
 
 logger = logging.getLogger("audiobook.service_manager")
 
 
 class ServiceManager:
-    """
-    Central service registry and lifecycle manager.
-
-    Implements lazy initialization and singleton pattern for services.
-    """
+    """服务注册中心（单例模式）"""
 
     _instance: Optional["ServiceManager"] = None
-    _services: Dict[ServiceType, BaseService] = {}
+    _services: Dict[str, Any] = {}
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance._services = {}
-            cls._instance._initialized = False
         return cls._instance
 
-    def __init__(self):
-        if not self._initialized:
-            self._services = {}
-            self._initialized = True
+    def register(self, name: str, service: Any) -> None:
+        """注册服务"""
+        self._services[name] = service
+        logger.debug(f"Registered service: {name}")
 
-    def register(self, service_type: ServiceType, service: BaseService) -> None:
-        """Register a service instance."""
-        self._services[service_type] = service
-        logger.debug(f"Registered service: {service_type.value}")
+    def get(self, name: str) -> Optional[Any]:
+        """获取服务"""
+        return self._services.get(name)
 
-    def get(self, service_type: ServiceType) -> Optional[BaseService]:
-        """Get a registered service instance."""
-        return self._services.get(service_type)
-
-    def get_storage(self) -> Optional[IStorageService]:
-        """Get storage service."""
-        return self.get(ServiceType.MINIO_STORAGE)
-
-    def get_epub_parser(self) -> Optional[IEpubParserService]:
-        """Get EPUB parser service."""
-        return self.get(ServiceType.EPUB_PARSER)
-
-    def get_text_processor(self) -> Optional[ITextProcessorService]:
-        """Get text processor service."""
-        return self.get(ServiceType.TEXT_PREPROCESSOR)
-
-    def get_analyzer(self) -> Optional[IAnalyzerService]:
-        """Get analyzer service."""
-        return self.get(ServiceType.DEEPSEEK_ANALYZER)
-
-    def get_tts(self) -> Optional[ITTSService]:
-        """Get TTS service."""
-        return self.get(ServiceType.MINIMAX_TTS)
-
-    def get_audio_postprocessor(self) -> Optional[IAudioPostprocessorService]:
-        """Get audio postprocessor service."""
-        return self.get(ServiceType.AUDIO_POSTPROCESSOR)
-
-    def get_voice_mapper(self) -> Optional[IVoiceMapperService]:
-        """Get voice mapper service."""
-        return self.get(ServiceType.VOICE_MAPPER)
-
-    def get_file_watcher(self) -> Optional[IFileWatcherService]:
-        """Get file watcher service."""
-        return self.get(ServiceType.FILE_WATCHER)
-
-    def get_publisher(self) -> Optional[IPublisherService]:
-        """Get publisher service."""
-        return self.get(ServiceType.PUBLISHER)
+    def get_or_init(self, name: str, factory_func):
+        """获取或初始化服务"""
+        if name not in self._services:
+            self._services[name] = factory_func()
+        return self._services[name]
 
     def initialize_all(self) -> Dict[str, bool]:
-        """Initialize all registered services."""
+        """初始化所有服务"""
         results = {}
-        for service_type, service in self._services.items():
+        for name, service in self._services.items():
             try:
-                service.initialize()
-                results[service_type.value] = True
-                logger.info(f"Initialized service: {service_type.value}")
+                if hasattr(service, "initialize"):
+                    service.initialize()
+                results[name] = True
             except Exception as e:
-                results[service_type.value] = False
-                logger.error(f"Failed to initialize {service_type.value}: {e}")
+                results[name] = False
+                logger.error(f"Failed to initialize {name}: {e}")
         return results
 
     def health_check_all(self) -> Dict[str, bool]:
-        """Run health check on all services."""
+        """健康检查所有服务"""
         results = {}
-        for service_type, service in self._services.items():
+        for name, service in self._services.items():
             try:
-                results[service_type.value] = service.health_check()
-            except Exception as e:
-                results[service_type.value] = False
-                logger.error(f"Health check failed for {service_type.value}: {e}")
+                results[name] = service.health_check() if hasattr(service, "health_check") else True
+            except Exception:
+                results[name] = False
         return results
 
     def clear(self) -> None:
-        """Clear all registered services."""
+        """清空所有服务"""
         self._services.clear()
-        logger.info("Cleared all services")
 
 
-# Global instance
 _service_manager: Optional[ServiceManager] = None
 
 
 def get_service_manager() -> ServiceManager:
-    """Get the global service manager instance."""
+    """获取全局服务管理器"""
     global _service_manager
     if _service_manager is None:
         _service_manager = ServiceManager()
     return _service_manager
-
-
-def get_services() -> Dict[ServiceType, BaseService]:
-    """Get all registered services."""
-    return get_service_manager()._services.copy()

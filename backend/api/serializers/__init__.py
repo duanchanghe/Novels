@@ -40,6 +40,15 @@ from .chapter import (
     ChapterSegmentsResponseSerializer,
 )
 
+from .character import (
+    CharacterSerializer,
+    CharacterListSerializer,
+    CharacterCreateSerializer,
+    CharacterUpdateSerializer,
+    CharacterBatchAssignSerializer,
+    CharacterSummarySerializer,
+)
+
 from .common import (
     PaginationSerializer,
     ErrorSerializer,
@@ -88,6 +97,13 @@ __all__ = [
     "ChapterAudioSerializer",
     "SegmentListSerializer",
     "ChapterSegmentsResponseSerializer",
+    # Character
+    "CharacterSerializer",
+    "CharacterListSerializer",
+    "CharacterCreateSerializer",
+    "CharacterUpdateSerializer",
+    "CharacterBatchAssignSerializer",
+    "CharacterSummarySerializer",
     # Common
     "PaginationSerializer",
     "ErrorSerializer",

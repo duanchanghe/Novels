@@ -1,0 +1,6 @@
+# Docker data volumes (local bind mounts)
+data/
+
+# Keep directories but ignore contents
+data/*
+!data/.gitkeep
