@@ -1,6 +1,9 @@
 # ===========================================
-# AI 有声书工坊 - 后端 Dockerfile (多阶段构建)
+# AI 有声书工坊 - 后端 Dockerfile (优化版)
 # ===========================================
+
+# Enable BuildKit for faster builds
+# Set DOCKER_BUILDKIT=1 before building
 
 # ===========================================
 # Stage 1: Builder
@@ -20,8 +23,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies
+# Copy requirements first (for better layer caching)
 COPY backend/requirements.txt .
+
+# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
 # ===========================================
@@ -39,6 +44,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libpq5 \
+    curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean \
     && rm -rf /var/cache/apt/archives/*
@@ -48,19 +54,23 @@ RUN groupadd -r appgroup && useradd -r -g appgroup appuser
 
 WORKDIR /app
 
-# Copy virtual environment from builder
+# Copy virtual environment from builder (faster than pip install)
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY --chown=appuser:appgroup backend/ .
 
-# Create necessary directories and collect static files
+# Create necessary directories
 RUN mkdir -p /app/logs /app/staticfiles && \
     chmod 777 /app/logs /app/staticfiles && \
-    chown -R appuser:appgroup /app && \
-    python manage.py collectstatic --noinput; \
     chown -R appuser:appgroup /app
+
+# Pre-collect static files (run as root first)
+RUN python manage.py collectstatic --noinput || true
+
+# Fix permissions after collectstatic
+RUN chown -R appuser:appgroup /app/staticfiles 2>/dev/null || true
 
 # Switch to non-root user
 USER appuser
@@ -74,7 +84,7 @@ EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')" || exit 1
+    CMD curl -f http://localhost:8000/api/health/ || exit 1
 
 # Default: run Django server
 CMD ["python", "-m", "gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--threads", "2"]
@@ -109,8 +119,11 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=appuser:appgroup backend/ .
 
 # Create necessary directories
-RUN mkdir -p /app/logs && chmod 777 /app/logs && chown -R appuser:appgroup /app && \
-    touch /app/logs/app.log && chown appuser:appgroup /app/logs/app.log
+RUN mkdir -p /app/logs && \
+    chmod 777 /app/logs && \
+    chown -R appuser:appgroup /app && \
+    touch /app/logs/app.log && \
+    chown appuser:appgroup /app/logs/app.log
 
 # Switch to non-root user
 USER appuser
@@ -153,8 +166,11 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 COPY --chown=appuser:appgroup backend/ .
 
 # Create necessary directories and set permissions
-RUN mkdir -p /app/logs && chmod 777 /app/logs && chown -R appuser:appgroup /app && \
-    touch /app/logs/app.log && chown appuser:appgroup /app/logs/app.log
+RUN mkdir -p /app/logs && \
+    chmod 777 /app/logs && \
+    chown -R appuser:appgroup /app && \
+    touch /app/logs/app.log && \
+    chown appuser:appgroup /app/logs/app.log
 
 # Switch to non-root user
 USER appuser

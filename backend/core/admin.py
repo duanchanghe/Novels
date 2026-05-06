@@ -27,6 +27,18 @@ from .models.channel import PublishChannel
 from .models.publish import PublishRecord, PublishStatus
 from .models.voice import VoiceProfile, RoleType
 from .models.task import TTSTask, TaskStatus
+from .models.character import Character, CharacterStatus, GenderType
+from .models.sound_effect import (
+    SoundEffect, SoundEffectUsage, SoundEffectCollection, SoundEffectCollectionItem,
+    SoundEffectType, SoundLayer, SoundPriority, SoundSource, SoundEffectStatus
+)
+from .forms import (
+    CharacterForm,
+    SoundEffectForm,
+    SoundEffectCollectionForm,
+    SoundEffectCollectionItemForm,
+    SoundEffectUsageForm,
+)
 
 
 # ===========================================
@@ -1004,3 +1016,450 @@ class TTSTaskAdmin(admin.ModelAdmin):
         """格式化显示进度百分比"""
         return f"{obj.progress_percentage}%"
     progress_display.short_description = "处理进度"
+
+
+# ===========================================
+# 角色库管理
+# ===========================================
+
+@admin.register(Character)
+class CharacterAdmin(admin.ModelAdmin):
+    """
+    角色库模型的管理界面配置
+
+    功能说明：
+    - 管理从 DeepSeek 分析出的角色
+    - 配置音色分配
+    - 审核角色信息
+    """
+
+    form = CharacterForm
+
+    list_display = [
+        "id",
+        "name",
+        "book_title",
+        "gender_badge",
+        "role_type",
+        "voice_profile_name",
+        "status_badge",
+        "dialogue_count",
+        "usage_count",
+    ]
+
+    list_filter = [
+        "status",
+        "gender",
+        "role_type",
+        "created_at",
+    ]
+
+    search_fields = [
+        "name",
+        "book__title",
+        "description",
+        "voice_description",
+    ]
+
+    readonly_fields = [
+        "id",
+        "created_at",
+        "updated_at",
+        "usage_count",
+    ]
+
+    ordering = ["book", "sort_order", "name"]
+
+    fieldsets = (
+        ("基本信息", {
+            "fields": (
+                "id",
+                "book",
+                "name",
+                "aliases",
+                "gender",
+                "description",
+            )
+        }),
+
+        ("声音特征", {
+            "description": "角色的声音特征描述",
+            "fields": (
+                "voice_description",
+                "role_type",
+                "emotions",
+            )
+        }),
+
+        ("音色分配", {
+            "description": "音色配置",
+            "fields": (
+                "voice_profile",
+                "custom_voice_id",
+                "custom_speed",
+                "custom_pitch",
+                "custom_volume",
+            )
+        }),
+
+        ("统计信息", {
+            "fields": (
+                "dialogue_count",
+                "usage_count",
+                "source",
+            )
+        }),
+
+        ("审核状态", {
+            "fields": (
+                "status",
+                "sort_order",
+            )
+        }),
+
+        ("时间戳", {
+            "fields": (
+                "created_at",
+                "updated_at",
+            )
+        }),
+    )
+
+    actions = ["approve_characters", "reject_characters"]
+
+    def book_title(self, obj):
+        """获取书籍标题"""
+        return obj.book.title if obj.book else "-"
+    book_title.short_description = "所属书籍"
+
+    def voice_profile_name(self, obj):
+        """获取音色名称"""
+        return obj.voice_profile.name if obj.voice_profile else "-"
+    voice_profile_name.short_description = "音色"
+
+    def gender_badge(self, obj):
+        """生成性别徽章"""
+        colors = {"male": "#0d6efd", "female": "#dc3545", "unknown": "#6c757d"}
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            colors.get(obj.gender, "#6c757d"),
+            obj.get_gender_display()
+        )
+    gender_badge.short_description = "性别"
+
+    def status_badge(self, obj):
+        """生成状态徽章"""
+        colors = {
+            "pending": "#ffc107",
+            "approved": "#198754",
+            "rejected": "#dc3545",
+        }
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            colors.get(obj.status, "#6c757d"),
+            obj.get_status_display()
+        )
+    status_badge.short_description = "状态"
+
+    @admin.action(description="审核通过选中角色")
+    def approve_characters(self, request, queryset):
+        count = queryset.update(status=CharacterStatus.APPROVED)
+        self.message_user(request, f"已审核通过 {count} 个角色")
+
+    @admin.action(description="审核拒绝选中角色")
+    def reject_characters(self, request, queryset):
+        count = queryset.update(status=CharacterStatus.REJECTED)
+        self.message_user(request, f"已拒绝 {count} 个角色")
+
+
+# ===========================================
+# 音效库管理
+# ===========================================
+
+@admin.register(SoundEffect)
+class SoundEffectAdmin(admin.ModelAdmin):
+    """
+    音效库模型的管理界面配置
+
+    功能说明：
+    - 管理音效资源
+    - 配置音效分类和标签
+    - 追踪使用统计
+    """
+
+    form = SoundEffectForm
+
+    list_display = [
+        "id",
+        "name",
+        "type_badge",
+        "layer",
+        "source",
+        "status",
+        "duration_display",
+        "usage_count",
+        "is_favorite",
+    ]
+
+    list_filter = [
+        "effect_type",
+        "layer",
+        "source",
+        "status",
+        "priority",
+        "is_verified",
+        "is_favorite",
+    ]
+
+    search_fields = [
+        "name",
+        "description",
+        "chinese_description",
+        "tags",
+        "chinese_tags",
+    ]
+
+    readonly_fields = [
+        "id",
+        "created_at",
+        "updated_at",
+        "usage_count",
+        "verified_at",
+    ]
+
+    ordering = ["-usage_count", "-priority", "name"]
+
+    fieldsets = (
+        ("基本信息", {
+            "fields": (
+                "id",
+                "name",
+                "description",
+                "chinese_description",
+            )
+        }),
+
+        ("分类信息", {
+            "fields": (
+                "effect_type",
+                "layer",
+                "priority",
+            )
+        }),
+
+        ("标签系统", {
+            "fields": (
+                "tags",
+                "chinese_tags",
+                "semantic_keywords",
+            )
+        }),
+
+        ("来源信息", {
+            "fields": (
+                "source",
+                "source_id",
+                "source_url",
+                "license_type",
+            )
+        }),
+
+        ("音频属性", {
+            "fields": (
+                "duration_ms",
+                "file_format",
+                "file_size",
+                "sample_rate",
+            )
+        }),
+
+        ("存储信息", {
+            "fields": (
+                "local_path",
+                "minio_path",
+                "minio_url",
+            )
+        }),
+
+        ("状态管理", {
+            "fields": (
+                "status",
+                "is_favorite",
+                "is_verified",
+                "verified_at",
+            )
+        }),
+
+        ("推荐配置", {
+            "fields": (
+                "suitable_scenes",
+                "recommended_volume_min",
+                "recommended_volume_max",
+                "recommended_fade_in_ms",
+                "recommended_fade_out_ms",
+            )
+        }),
+
+        ("统计信息", {
+            "fields": (
+                "usage_count",
+                "last_used_at",
+            )
+        }),
+
+        ("时间戳", {
+            "fields": (
+                "created_at",
+                "updated_at",
+            )
+        }),
+    )
+
+    actions = ["verify_sound_effects", "toggle_favorites"]
+
+    def duration_display(self, obj):
+        """格式化显示时长"""
+        if obj.duration_ms:
+            seconds = obj.duration_ms / 1000
+            return f"{seconds:.1f}s"
+        return "-"
+    duration_display.short_description = "时长"
+
+    def type_badge(self, obj):
+        """生成类型徽章"""
+        colors = {
+            "environment": "#17a2b8",
+            "action": "#fd7e14",
+            "transition": "#6f42c1",
+            "nature": "#28a745",
+            "ambient": "#20c997",
+            "weather": "#6610f2",
+            "urban": "#6c757d",
+            "fantasy": "#e83e8c",
+            "scifi": "#007bff",
+        }
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 3px 8px; '
+            'border-radius: 3px; font-size: 11px;">{}</span>',
+            colors.get(obj.effect_type, "#6c757d"),
+            obj.get_effect_type_display()
+        )
+    type_badge.short_description = "类型"
+
+    @admin.action(description="审核通过选中音效")
+    def verify_sound_effects(self, request, queryset):
+        count = queryset.count()
+        for se in queryset:
+            se.verify()
+        self.message_user(request, f"已审核通过 {count} 个音效")
+
+    @admin.action(description="切换收藏状态")
+    def toggle_favorites(self, request, queryset):
+        for se in queryset:
+            se.toggle_favorite()
+        self.message_user(request, f"已更新 {queryset.count()} 个音效的收藏状态")
+
+
+@admin.register(SoundEffectUsage)
+class SoundEffectUsageAdmin(admin.ModelAdmin):
+    """音效使用记录管理"""
+
+    form = SoundEffectUsageForm
+
+    list_display = [
+        "id",
+        "sound_effect_name",
+        "book_id",
+        "chapter_id",
+        "trigger_at_ms",
+        "volume",
+        "match_score",
+        "created_at",
+    ]
+
+    list_filter = [
+        "created_at",
+    ]
+
+    search_fields = [
+        "sound_effect__name",
+        "matched_from_query",
+    ]
+
+    readonly_fields = [
+        "id",
+        "created_at",
+    ]
+
+    ordering = ["-created_at"]
+
+    def sound_effect_name(self, obj):
+        return obj.sound_effect.name if obj.sound_effect else "-"
+    sound_effect_name.short_description = "音效"
+
+
+@admin.register(SoundEffectCollection)
+class SoundEffectCollectionAdmin(admin.ModelAdmin):
+    """音效收藏集管理"""
+
+    form = SoundEffectCollectionForm
+
+    list_display = [
+        "id",
+        "name",
+        "scene_type",
+        "sound_count",
+        "is_public",
+        "is_default",
+        "created_at",
+    ]
+
+    list_filter = [
+        "scene_type",
+        "is_public",
+        "is_default",
+    ]
+
+    search_fields = [
+        "name",
+        "description",
+    ]
+
+    ordering = ["-is_default", "-sound_count", "name"]
+
+
+@admin.register(SoundEffectCollectionItem)
+class SoundEffectCollectionItemAdmin(admin.ModelAdmin):
+    """音效收藏集项目管理"""
+
+    form = SoundEffectCollectionItemForm
+
+    list_display = [
+        "id",
+        "collection_name",
+        "sound_effect_name",
+        "custom_volume",
+        "sort_order",
+        "added_at",
+    ]
+
+    list_filter = [
+        "added_at",
+    ]
+
+    search_fields = [
+        "collection__name",
+        "sound_effect__name",
+    ]
+
+    ordering = ["collection", "sort_order"]
+
+    def collection_name(self, obj):
+        return obj.collection.name if obj.collection else "-"
+    collection_name.short_description = "收藏集"
+
+    def sound_effect_name(self, obj):
+        return obj.sound_effect.name if obj.sound_effect else "-"
+    sound_effect_name.short_description = "音效"

@@ -1,0 +1,83 @@
+# ===========================================
+# Docker Build 优化 - 排除不必要文件
+# ===========================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.env
+.venv/
+
+# Testing
+.coverage
+htmlcov/
+.tox/
+.pytest_cache/
+
+# Documentation
+docs/
+*.md
+!requirements.txt
+
+# Node (if any)
+node_modules/
+
+# Logs
+*.log
+logs/
+
+# Local files
+*.local
+*.sqlite3
+
+# IDE project files
+*.sublime-*
+.DS_Store
+Thumbs.db
+
+# Temp files
+*.tmp
+temp/
+tmp/
+
+# Migrations (keep only __init__.py)
+**/migrations/*
+!**/migrations/__init__.py
+
+# Docker files (not needed in build context)
+docker-compose*.yml
+Dockerfile*
+.dockerignore
+
+# Build scripts
+build.sh
+*.sh
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml

@@ -13,6 +13,18 @@ from core.models.task import TTSTask
 from core.models.voice import VoiceProfile
 from core.models.channel import PublishChannel, PlatformType
 from core.models.publish import PublishRecord, PublishStatus
+from core.models.character import Character, CharacterStatus, GenderType
+from core.models.sound_effect import (
+    SoundEffect,
+    SoundEffectUsage,
+    SoundEffectCollection,
+    SoundEffectCollectionItem,
+    SoundEffectType,
+    SoundLayer,
+    SoundPriority,
+    SoundSource,
+    SoundEffectStatus,
+)
 
 __all__ = [
     # Book
@@ -36,4 +48,18 @@ __all__ = [
     # Publish
     "PublishRecord",
     "PublishStatus",
+    # Character
+    "Character",
+    "CharacterStatus",
+    "GenderType",
+    # Sound Effect
+    "SoundEffect",
+    "SoundEffectUsage",
+    "SoundEffectCollection",
+    "SoundEffectCollectionItem",
+    "SoundEffectType",
+    "SoundLayer",
+    "SoundPriority",
+    "SoundSource",
+    "SoundEffectStatus",
 ]

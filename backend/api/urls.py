@@ -49,6 +49,40 @@ from .views import (
     WatchRestartView,
     WatchHistoryView,
 )
+from .views.characters import (
+    CharacterListView,
+    CharacterDetailView,
+    CharacterBatchAssignVoiceView,
+    CharacterApproveView,
+    CharacterApproveAllView,
+    CharacterSummaryView,
+    CharacterCanGenerateView,
+    VoiceProfileOptionsView,
+)
+from .views.generate import (
+    ManualGenerateView,
+    GenerateCheckView,
+    CharacterSyncView,
+)
+from .views.sound_effects import (
+    SoundEffectListView,
+    SoundEffectDetailView,
+    SoundEffectSearchView,
+    SoundEffectRecommendView,
+    SoundEffectStatisticsView,
+    BBSSyncView,
+    BBCEffectDownloadView,
+    SoundEffectUsageView,
+    SoundEffectFavoriteView,
+    SoundEffectVerifyView,
+    SoundEffectCollectionListView,
+    SoundEffectCollectionDetailView,
+    SoundEffectCollectionItemView,
+    SoundEffectExportView,
+    SoundEffectImportView,
+    SoundEffectTypeListView,
+    SoundEffectSourceListView,
+)
 
 # 使用简单的 URL 配置
 urlpatterns = [
@@ -84,6 +118,22 @@ urlpatterns = [
     path('chapters/<int:pk>/segments/', ChapterSegmentsView.as_view(), name='chapter-segments'),
 
     # ===========================================
+    # Characters API (角色库)
+    # ===========================================
+    path('books/<int:book_id>/characters/', CharacterListView.as_view(), name='character-list'),
+    path('books/<int:book_id>/characters/<int:character_id>/', CharacterDetailView.as_view(), name='character-detail'),
+    path('books/<int:book_id>/characters/batch-assign-voice/', CharacterBatchAssignVoiceView.as_view(), name='character-batch-assign'),
+    path('books/<int:book_id>/characters/<int:character_id>/approve/', CharacterApproveView.as_view(), name='character-approve'),
+    path('books/<int:book_id>/characters/approve-all/', CharacterApproveAllView.as_view(), name='character-approve-all'),
+    path('books/<int:book_id>/characters/summary/', CharacterSummaryView.as_view(), name='character-summary'),
+    path('books/<int:book_id>/characters/can-generate/', CharacterCanGenerateView.as_view(), name='character-can-generate'),
+    path('books/<int:book_id>/voice-profiles/', VoiceProfileOptionsView.as_view(), name='voice-profile-options'),
+    path('books/<int:book_id>/manual-generate/', ManualGenerateView.as_view(), name='manual-generate'),
+    path('books/<int:book_id>/generate-check/', GenerateCheckView.as_view(), name='generate-check'),
+    path('books/<int:book_id>/sync-characters/', CharacterSyncView.as_view(), name='sync-characters'),
+    path('voice-profiles/', VoiceProfileOptionsView.as_view(), name='voice-profiles-all'),
+
+    # ===========================================
     # Upload API
     # ===========================================
     path('upload/epub/', UploadView.as_view(), name='upload-epub'),
@@ -113,4 +163,31 @@ urlpatterns = [
     path('watch/status/', WatchStatusView.as_view(), name='watch-status'),
     path('watch/restart/', WatchRestartView.as_view(), name='watch-restart'),
     path('watch/history/', WatchHistoryView.as_view(), name='watch-history'),
+
+    # ===========================================
+    # Sound Effects API (音效库)
+    # ===========================================
+    path('sound-effects/', SoundEffectListView.as_view(), name='sound-effect-list'),
+    path('sound-effects/<int:effect_id>/', SoundEffectDetailView.as_view(), name='sound-effect-detail'),
+    path('sound-effects/search/', SoundEffectSearchView.as_view(), name='sound-effect-search'),
+    path('sound-effects/recommend/', SoundEffectRecommendView.as_view(), name='sound-effect-recommend'),
+    path('sound-effects/statistics/', SoundEffectStatisticsView.as_view(), name='sound-effect-statistics'),
+    path('sound-effects/bbc-sync/', BBSSyncView.as_view(), name='sound-effect-bbc-sync'),
+    path('sound-effects/bbc-download/', BBCEffectDownloadView.as_view(), name='sound-effect-bbc-download'),
+    path('sound-effects/<int:effect_id>/usage/', SoundEffectUsageView.as_view(), name='sound-effect-usage'),
+    path('sound-effects/<int:effect_id>/favorite/', SoundEffectFavoriteView.as_view(), name='sound-effect-favorite'),
+    path('sound-effects/<int:effect_id>/verify/', SoundEffectVerifyView.as_view(), name='sound-effect-verify'),
+
+    # Sound Effect Collections (音效收藏集)
+    path('sound-effects/collections/', SoundEffectCollectionListView.as_view(), name='sound-effect-collection-list'),
+    path('sound-effects/collections/<int:collection_id>/', SoundEffectCollectionDetailView.as_view(), name='sound-effect-collection-detail'),
+    path('sound-effects/collections/<int:collection_id>/items/', SoundEffectCollectionItemView.as_view(), name='sound-effect-collection-item'),
+
+    # Import/Export (导入导出)
+    path('books/<int:book_id>/sound-effects/export/', SoundEffectExportView.as_view(), name='sound-effect-export'),
+    path('books/<int:book_id>/sound-effects/import/', SoundEffectImportView.as_view(), name='sound-effect-import'),
+
+    # Types and Sources (类型和来源)
+    path('sound-effects/types/', SoundEffectTypeListView.as_view(), name='sound-effect-types'),
+    path('sound-effects/sources/', SoundEffectSourceListView.as_view(), name='sound-effect-sources'),
 ]
