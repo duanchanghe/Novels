@@ -545,10 +545,16 @@ class DeepSeekAnalyzerService:
 1. 按段落编号
 2. 判断段落类型（旁白/对话/混合）
 3. 识别说话人，合并角色别名（如"张兄"、"三哥"→张三）
-4. 判断情感及强度（平静/高兴/悲伤/愤怒/紧张/惊讶/温柔/严肃/冷漠/嘲讽）
+4. 判断对话段落的情感（平静/高兴/悲伤/愤怒/紧张/惊讶/温柔/严肃/冷漠/嘲讽）及强度（弱/中/强）
 5. 识别多音字并给出读音
-6. 混合段落拆分
+6. 混合段落拆分（旁白+对话拆分为独立段落）
 7. 识别特殊标记（古文/诗词/内心独白/系统提示）
+8. 推断角色性别、性格特征、说话风格
+
+【重要】情感标注规则：
+- 情感只标注在【对话段落】上，旁白段落无情感
+- 每个对话段落只能有一个情感
+- 格式："情感_强度"，如"愤怒_强"、"温柔_弱"
 
 【中文网络小说特色】
 - 网络小说特有称呼：道兄、前辈、宗主、仙尊、魔帝等
@@ -563,7 +569,7 @@ class DeepSeekAnalyzerService:
       "text": "原文",
       "type": "narration|dialogue|mixed",
       "speaker": "旁白|角色名",
-      "emotion": "情感_强度",
+      "emotion": "情感_强度",  // 仅对话段落有，旁白为null
       "polyphone_fixes": [["字","拼音"]],
       "special_markers": ["古文朗读"]  // 可选
     }}
@@ -572,16 +578,18 @@ class DeepSeekAnalyzerService:
     {{
       "name": "角色名",
       "aliases": ["别名1", "别名2"],
+      "gender": "male|female|unknown",
+      "role_type": "主角|配角|反派|旁白",
       "dialogue_count": 5,
-      "emotions": ["高兴", "悲伤"],
-      "role_type": "男主|女主|反派|配角|旁白"  // 可选
+      "description": "角色外貌、身份、背景（20字内）",
+      "personality": "性格特征",
+      "speech_style": "说话风格"
     }}
   ],
   "statistics": {{
     "total_paragraphs": 10,
     "total_dialogues": 5,
-    "total_characters": 3,
-    "emotion_distribution": {{"高兴": 3, "悲伤": 2}}
+    "total_characters": 3
   }}
 }}
 

@@ -28,6 +28,7 @@ from .models.publish import PublishRecord, PublishStatus
 from .models.voice import VoiceProfile, RoleType
 from .models.task import TTSTask, TaskStatus
 from .models.character import Character, CharacterStatus, GenderType
+from .models.paragraph import Paragraph, ParagraphType, EmotionType, EmotionIntensity
 from .models.sound_effect import (
     SoundEffect, SoundEffectUsage, SoundEffectCollection, SoundEffectCollectionItem,
     SoundEffectType, SoundLayer, SoundPriority, SoundSource, SoundEffectStatus
@@ -316,6 +317,8 @@ class ChapterAdmin(admin.ModelAdmin):
         "chapter_index",         # 章节序号
         "title",                 # 章节标题
         "status_badge",          # 状态徽章
+        "paragraph_count",       # 段落数量
+        "character_count",       # 角色数量
         "audio_duration",        # 音频时长
         "created_at",            # 创建时间
     ]
@@ -361,6 +364,7 @@ class ChapterAdmin(admin.ModelAdmin):
             "description": "DeepSeek AI 分析得出的章节信息",
             "fields": (
                 "analysis_result",    # AI 分析结果（JSON格式）
+                "paragraphs_display", # 段落列表
                 "characters",         # 识别出的角色列表
             )
         }),
@@ -407,6 +411,59 @@ class ChapterAdmin(admin.ModelAdmin):
         """获取章节所属书籍的标题"""
         return obj.book.title if obj.book else "-"
     book_title.short_description = "所属书籍"
+
+    def paragraph_count(self, obj):
+        """获取段落数量"""
+        result = obj.analysis_result
+        if result and isinstance(result, dict):
+            paragraphs = result.get("paragraphs", [])
+            return len(paragraphs) if paragraphs else 0
+        return 0
+    paragraph_count.short_description = "段落数"
+
+    def character_count(self, obj):
+        """获取角色数量"""
+        result = obj.analysis_result
+        if result and isinstance(result, dict):
+            characters = result.get("characters", [])
+            return len(characters) if characters else 0
+        return 0
+    character_count.short_description = "角色数"
+
+    def paragraphs_display(self, obj):
+        """展示段落列表"""
+        result = obj.analysis_result
+        if not result or not isinstance(result, dict):
+            return "-"
+        
+        paragraphs = result.get("paragraphs", [])
+        if not paragraphs:
+            return "-"
+        
+        html = '<table style="width:100%; border-collapse: collapse;">'
+        html += '<tr style="background:#f0f0f0;"><th style="padding:5px;border:1px solid #ddd;">#</th><th style="padding:5px;border:1px solid #ddd;">类型</th><th style="padding:5px;border:1px solid #ddd;">说话人</th><th style="padding:5px;border:1px solid #ddd;">情感</th><th style="padding:5px;border:1px solid #ddd;">内容预览</th></tr>'
+        
+        for p in paragraphs[:20]:  # 最多显示20个段落
+            p_type = p.get("type", "narration")
+            speaker = p.get("speaker", "旁白")
+            emotion = p.get("emotion") or "-"
+            text = p.get("text", "")[:50]
+            if len(p.get("text", "")) > 50:
+                text += "..."
+            
+            type_color = {"narration": "#6c757d", "dialogue": "#0d6efd", "mixed": "#ffc107"}.get(p_type, "#6c757d")
+            
+            html += f'<tr><td style="padding:5px;border:1px solid #ddd;">{p.get("paragraph_index", "?")}</td>'
+            html += f'<td style="padding:5px;border:1px solid #ddd;"><span style="background:{type_color};color:white;padding:2px 6px;border-radius:3px;font-size:10px;">{p_type}</span></td>'
+            html += f'<td style="padding:5px;border:1px solid #ddd;">{speaker}</td>'
+            html += f'<td style="padding:5px;border:1px solid #ddd;">{emotion}</td>'
+            html += f'<td style="padding:5px;border:1px solid #ddd;font-size:11px;">{text}</td></tr>'
+        
+        html += '</table>'
+        if len(paragraphs) > 20:
+            html += f'<p style="color:#666;">... 共 {len(paragraphs)} 个段落</p>'
+        return format_html(html)
+    paragraphs_display.short_description = "段落列表"
 
     def audio_duration(self, obj):
         """格式化显示音频时长"""

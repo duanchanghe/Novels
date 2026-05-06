@@ -34,19 +34,30 @@ class DjangoCompatDB:
     这个类将 db.query(Model) 转换为 Model.objects
     """
     
+    def __init__(self):
+        self._dirty_objects = set()
+    
     def query(self, model):
         return DjangoQuerySetProxy(model)
     
     def add(self, obj):
-        """保存 Django 模型对象"""
+        """添加并保存 Django 模型对象"""
         if hasattr(obj, 'save') and callable(obj.save):
             obj.save()
     
+    def track_dirty(self, obj):
+        """追踪被修改的对象"""
+        self._dirty_objects.add(obj)
+    
     def commit(self):
-        """提交事务"""
-        from django.db import transaction
-        with transaction.atomic():
-            pass
+        """提交事务，保存所有被修改的对象"""
+        for obj in self._dirty_objects:
+            try:
+                if hasattr(obj, 'save') and callable(obj.save):
+                    obj.save(update_fields=None)
+            except Exception:
+                pass
+        self._dirty_objects.clear()
     
     def refresh(self, obj):
         if hasattr(obj, 'refresh_from_db'):

@@ -14,6 +14,12 @@ from core.models.voice import VoiceProfile
 from core.models.channel import PublishChannel, PlatformType
 from core.models.publish import PublishRecord, PublishStatus
 from core.models.character import Character, CharacterStatus, GenderType
+from core.models.paragraph import (
+    Paragraph,
+    ParagraphType,
+    EmotionType,
+    EmotionIntensity,
+)
 from core.models.sound_effect import (
     SoundEffect,
     SoundEffectUsage,
@@ -52,6 +58,11 @@ __all__ = [
     "Character",
     "CharacterStatus",
     "GenderType",
+    # Paragraph
+    "Paragraph",
+    "ParagraphType",
+    "EmotionType",
+    "EmotionIntensity",
     # Sound Effect
     "SoundEffect",
     "SoundEffectUsage",

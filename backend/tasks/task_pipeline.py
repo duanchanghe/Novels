@@ -1521,21 +1521,15 @@ def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
         from services.svc_deepseek_analyzer import DeepSeekAnalyzerService
         from services.svc_minio_storage import get_storage_service
 
-        book = db.query(Book).filter(id=book_id).first()
+        book = Book.objects.filter(id=book_id).first()
         if not book:
             return {"success": False, "message": "书籍不存在"}
 
         # 获取所有待分析的章节
-        chapters = (
-            db.query(Chapter)
-            .filter(book_id=book_id)
-            .filter(Chapter.status.in_([
-                ChapterStatus.PENDING,
-                ChapterStatus.AWAITING_CONFIRM,
-            ]))
-            .order_by("chapter_index")
-            .all()
-        )
+        chapters = list(Chapter.objects.filter(
+            book_id=book_id,
+            status__in=[ChapterStatus.PENDING, ChapterStatus.AWAITING_CONFIRM]
+        ).order_by("chapter_index"))
 
         if not chapters:
             # 所有章节可能已分析过，直接进入角色映射
@@ -1554,6 +1548,7 @@ def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
 
         # 更新书籍状态
         book.status = BookStatus.ANALYZING
+        db.track_dirty(book)
         db.commit()
 
         # 逐章分析（串行，避免并发调用 DeepSeek API 触发限流）
@@ -1567,6 +1562,7 @@ def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
             try:
                 # 更新章节状态
                 chapter.status = ChapterStatus.ANALYZING
+                db.track_dirty(chapter)
                 db.commit()
 
                 # 读取章节文本
@@ -1590,6 +1586,7 @@ def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
                     logger.warning(f"[Chapter {chapter.id}] 文本过短，跳过分析")
                     chapter.status = ChapterStatus.ANALYZED
                     chapter.analysis_result = {"paragraphs": [], "characters": []}
+                    db.track_dirty(chapter)
                     db.commit()
                     analyzed_count += 1
                     continue
@@ -1635,6 +1632,7 @@ def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
                 if result.get("processed_text"):
                     chapter.minimax_characters = len(result["processed_text"])
 
+                db.track_dirty(chapter)
                 db.commit()
                 analyzed_count += 1
                 logger.info(
@@ -1646,6 +1644,7 @@ def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
                 logger.error(f"[Chapter {chapter.id}] 分析失败: {e}")
                 chapter.status = ChapterStatus.FAILED
                 chapter.error_message = str(e)
+                db.track_dirty(chapter)
                 db.commit()
                 failed_count += 1
 
@@ -1731,6 +1730,11 @@ def unify_and_map_characters(self, book_id: int) -> Dict[str, Any]:
                         "appears_in_chapters": [],
                         "total_dialogues": 0,
                         "role_type": char.get("role_type", "配角"),
+                        "gender": char.get("gender", "unknown"),
+                        "description": char.get("description", ""),
+                        "personality": char.get("personality", ""),
+                        "speech_style": char.get("speech_style", ""),
+                        "voice_description": char.get("voice_description", ""),
                     }
                 cc = all_characters[name]
                 for alias in char.get("aliases", []):
@@ -1749,7 +1753,11 @@ def unify_and_map_characters(self, book_id: int) -> Dict[str, Any]:
         voice_mapper = VoiceMapperService()
         voice_mapping = {}
         role_summary = []
-
+        
+        # 保存角色到数据库
+        from core.models.character import Character, RoleType, GenderType
+        created_count = 0
+        
         for char_name, char_info in all_characters.items():
             voice_config = voice_mapper.get_voice_for_speaker(char_name)
             voice_mapping[char_name] = {
@@ -1766,6 +1774,46 @@ def unify_and_map_characters(self, book_id: int) -> Dict[str, Any]:
                 "chapters": char_info["appears_in_chapters"],
                 "dialogues": char_info["total_dialogues"],
             })
+            
+            # 保存到 Character 表
+            char_obj, created = Character.objects.get_or_create(
+                book_id=book_id,
+                name=char_name,
+                defaults={
+                    "aliases": list(char_info["aliases"]),
+                    "role_type": char_info.get("role_type", RoleType.SUPPORTING),
+                    "gender": char_info.get("gender", GenderType.UNKNOWN),
+                    "emotions": list(char_info["emotions"]),
+                    "dialogue_count": char_info["total_dialogues"],
+                    "description": char_info.get("description", ""),
+                    "personality": char_info.get("personality", ""),
+                    "speech_style": char_info.get("speech_style", ""),
+                    "voice_description": char_info.get("voice_description", ""),
+                    "custom_voice_id": voice_config["voice_id"],
+                    "custom_speed": voice_config["speed"],
+                    "custom_pitch": voice_config["pitch"],
+                    "source": "deepseek",
+                    "minio_path": f"characters/{book_id}/{char_name}.json",
+                }
+            )
+            if not created:
+                # 更新已存在角色的信息
+                char_obj.aliases = list(char_info["aliases"]) if char_info["aliases"] else char_obj.aliases
+                if char_info.get("gender") and char_info["gender"] != "unknown":
+                    char_obj.gender = char_info["gender"]
+                if char_info.get("description"):
+                    char_obj.description = char_info["description"]
+                if char_info.get("personality"):
+                    char_obj.personality = char_info["personality"]
+                if char_info.get("speech_style"):
+                    char_obj.speech_style = char_info["speech_style"]
+                if char_info.get("voice_description"):
+                    char_obj.voice_description = char_info["voice_description"]
+                char_obj.dialogue_count = char_info["total_dialogues"]
+                char_obj.save()
+            else:
+                created_count += 1
+            
             logger.info(
                 f"  角色 '{char_name}' → 音色 {voice_config['voice_id']} "
                 f"(出现 {len(char_info['appears_in_chapters'])} 章, "
@@ -1790,7 +1838,7 @@ def unify_and_map_characters(self, book_id: int) -> Dict[str, Any]:
 
         logger.info(
             f"[Book {book_id}] 角色-音色映射完成，"
-            f"共 {len(role_summary)} 个角色，开始逐章生成音频"
+            f"共 {len(role_summary)} 个角色 (新建 {created_count} 个)，开始逐章生成音频"
         )
 
         # 触发第一章的音频生成

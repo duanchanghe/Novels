@@ -10,6 +10,7 @@ API URL Configuration - 向后兼容版
 """
 
 from django.urls import path, include
+from django.views.generic import RedirectView
 from rest_framework.routers import DefaultRouter
 
 # 导入新的视图
@@ -70,7 +71,7 @@ from .views.sound_effects import (
     SoundEffectSearchView,
     SoundEffectRecommendView,
     SoundEffectStatisticsView,
-    BBSSyncView,
+    BBBSyncView,
     BBCEffectDownloadView,
     SoundEffectUsageView,
     SoundEffectFavoriteView,
@@ -86,6 +87,9 @@ from .views.sound_effects import (
 
 # 使用简单的 URL 配置
 urlpatterns = [
+    # API 测试页面
+    path('api-test/', RedirectView.as_view(url='/static/api_test.html', permanent=False), name='api-test'),
+    
     # ===========================================
     # Health Check
     # ===========================================
@@ -172,7 +176,7 @@ urlpatterns = [
     path('sound-effects/search/', SoundEffectSearchView.as_view(), name='sound-effect-search'),
     path('sound-effects/recommend/', SoundEffectRecommendView.as_view(), name='sound-effect-recommend'),
     path('sound-effects/statistics/', SoundEffectStatisticsView.as_view(), name='sound-effect-statistics'),
-    path('sound-effects/bbc-sync/', BBSSyncView.as_view(), name='sound-effect-bbc-sync'),
+    path('sound-effects/bbc-sync/', BBBSyncView.as_view(), name='sound-effect-bbc-sync'),
     path('sound-effects/bbc-download/', BBCEffectDownloadView.as_view(), name='sound-effect-bbc-download'),
     path('sound-effects/<int:effect_id>/usage/', SoundEffectUsageView.as_view(), name='sound-effect-usage'),
     path('sound-effects/<int:effect_id>/favorite/', SoundEffectFavoriteView.as_view(), name='sound-effect-favorite'),
