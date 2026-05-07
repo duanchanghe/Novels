@@ -795,7 +795,7 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
                 db.query(Chapter)
                 .filter(book_id=chapter.book_id)
                 .filter(status=ChapterStatus.ANALYZED)
-                .filter(Chapter.id != chapter_id)
+                .exclude(id=chapter_id)
                 .order_by("chapter_index")
                 .all()
             )

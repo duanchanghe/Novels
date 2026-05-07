@@ -265,17 +265,33 @@ class VoiceMapperService:
             list: 音色列表
         """
         return [
-            {"id": VoiceID.MALE_QN_QINGSE, "name": "青年男声-清澈", "gender": "male", "description": "清澈青年男性音色，适合旁白和男主角"},
-            {"id": VoiceID.MALE_QN, "name": "青年男声", "gender": "male", "description": "标准青年男性音色"},
-            {"id": VoiceID.MALE_YUN, "name": "沉稳男声", "gender": "male", "description": "成熟稳重的男性音色，适合长辈、师父"},
-            {"id": VoiceID.MALE_YUNQI, "name": "男声-元气", "gender": "male", "description": "元气男声，适合年轻人"},
-            {"id": VoiceID.MALE_SHAON, "name": "少年男声", "gender": "male", "description": "少年男性音色，适合年轻男性角色"},
-            {"id": VoiceID.MALE_TIAN, "name": "低沉男声", "gender": "male", "description": "低沉有力的男性音色，适合反派角色"},
-            {"id": VoiceID.FEMALE_SHAON, "name": "少女音", "gender": "female", "description": "标准青年女性音色，适合女主角"},
-            {"id": VoiceID.FEMALE_TIANMEI, "name": "甜美女声", "gender": "female", "description": "甜美女性音色，适合仙女、女主"},
-            {"id": VoiceID.FEMALE_SS, "name": "成熟女声", "gender": "female", "description": "成熟女性音色，适合年长女性"},
-            {"id": VoiceID.FEMALE_DON, "name": "年长女声", "gender": "female", "description": "年长女性音色，适合长辈女性角色"},
-            {"id": VoiceID.FEMALE_XIANG, "name": "童声", "gender": "female", "description": "童声音色，适合儿童角色"},
+            # ── 男性音色 ──
+            {"id": VoiceID.MALE_QN_QINGSE, "name": "青涩青年", "gender": "male", "description": "清澈青年音色，适合旁白和男主角"},
+            {"id": VoiceID.MALE_QN_JINGYING, "name": "精英青年", "gender": "male", "description": "精英青年音色，适合商务人士"},
+            {"id": VoiceID.MALE_QN_BADAO, "name": "霸道青年", "gender": "male", "description": "霸道青年音色，适合反派或强势角色"},
+            {"id": VoiceID.MALE_QN_DAXUESHENG, "name": "青年大学生", "gender": "male", "description": "大学生音色，适合学生角色"},
+
+            # ── 女性音色 ──
+            {"id": VoiceID.FEMALE_SHAON, "name": "少女音色", "gender": "female", "description": "少女音色，适合女主角"},
+            {"id": VoiceID.FEMALE_YUJIE, "name": "御姐音色", "gender": "female", "description": "御姐音色，适合成熟女性"},
+            {"id": VoiceID.FEMALE_CHENGSHU, "name": "成熟女性", "gender": "female", "description": "成熟女性音色，适合年长女性角色"},
+            {"id": VoiceID.FEMALE_TIANMEI, "name": "甜美女声", "gender": "female", "description": "甜美女性音色，适合仙女、温柔女主"},
+
+            # ── 儿童音色 ──
+            {"id": VoiceID.CLEVER_BOY, "name": "聪明男童", "gender": "male", "description": "聪明男童音色，适合儿童角色"},
+            {"id": VoiceID.CUTE_BOY, "name": "可爱男童", "gender": "male", "description": "可爱男童音色"},
+            {"id": VoiceID.LOVELY_GIRL, "name": "萌萌女童", "gender": "female", "description": "萌萌女童音色，适合女童角色"},
+
+            # ── 特色音色 ──
+            {"id": VoiceID.RELIABLE_EXECUTIVE, "name": "沉稳高管", "gender": "male", "description": "沉稳可靠的中年男性高管"},
+            {"id": VoiceID.MALE_ANCHOR, "name": "播报男声", "gender": "male", "description": "富有磁性的播报员男声"},
+            {"id": VoiceID.GENTLEMAN, "name": "温润男声", "gender": "male", "description": "温润磁性的青年男声"},
+            {"id": VoiceID.HUMOROUS_ELDER, "name": "搞笑大爷", "gender": "male", "description": "幽默老年男性，适合老人角色"},
+            {"id": VoiceID.KIND_ELDER, "name": "花甲奶奶", "gender": "female", "description": "慈祥和蔼的老年女性奶奶"},
+            {"id": VoiceID.WARM_BESTIE, "name": "温暖闺蜜", "gender": "female", "description": "温暖清脆的女性闺蜜声音"},
+            {"id": VoiceID.MATERNAL_GENTLE, "name": "温柔大婶", "gender": "female", "description": "温和善良的中年大婶"},
+            {"id": VoiceID.RADIO_HOST, "name": "电台男主播", "gender": "male", "description": "富有诗意的电台主播"},
+            {"id": VoiceID.NEWS_ANCHOR, "name": "新闻女声", "gender": "female", "description": "专业新闻女主播"},
         ]
 
     def get_role_categories(self) -> List[Dict[str, Any]]:

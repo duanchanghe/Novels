@@ -1349,24 +1349,26 @@ class DeepSeekAnalyzerService:
         """
         后处理：将 mixed 类型段落拆分为 narration + dialogue。
 
-        DeepSeek 有时标记段落为 mixed 但未真正拆分，
-        此方法根据中文对话模式做确定性拆分。
+        核心能力：
+        1. 识别旁白中的情感/语音特征（如"变得嘶哑而凶狠"）
+        2. 将旁白和对话拆分为独立段落
+        3. 对话继承旁白的情感强度
 
         例：
-          她说：“你疯了！”  →  她说： | 你疯了！
-          他温和地问：“为什么？”  →  他温和地问： | 为什么？
+          她说："你疯了！"  →  她说： | 你疯了！
+          她听了，直直地立在他面前，连嗓音都变了，变得嘶哑而凶狠，她说："见鬼了..."
+            → 旁白(嗓音嘶哑而凶狠) + 对话(继承凶狠)
         """
         paragraphs = result.get("paragraphs", [])
         new_paragraphs = []
-        # 说话引号模式：以说/道/问/答/喊/叫/吼等结尾 + ：或, + “...”或"..."
-        dialogue_re = re.compile(
-            r'(?P<narration>.+?(?:说|道|问|答|喊|叫|吼|哭|笑|骂|开口|'
-            r'回答|吩咐|嘱咐|感慨|抱怨|追问|喃喃|大叫|喊道|说道|'
-            r'低声|轻声|大声|温和|严厉|感叹|重复'
-            r'))'
-            r'[：:\s]*'
-            r'[「『【\(（]?\s*'
-            r'[\u201c\u201d\"](?P<dialogue>[^\u201c\u201d\"]+?)[\u201c\u201d\"]'
+
+        # 语音特征模式（从旁白中提取）
+        voice_pattern = re.compile(
+            r'(?:连)?嗓音都变了?[,，]?变得?([^，,。]+)'
+        )
+        # 情感词（用于推断情感和强度）
+        emotion_pattern = re.compile(
+            r'(?:嘶哑|凶狠|低沉|颤抖|平静|冷淡|激动|愤怒|温柔|冷酷|悲伤|严肃)'
         )
 
         for para in paragraphs:
@@ -1377,60 +1379,120 @@ class DeepSeekAnalyzerService:
                 new_paragraphs.append(para)
                 continue
 
-            # 尝试匹配说话引号
-            match = dialogue_re.search(text)
-            if match:
-                narration_text = match.group("narration").strip()
-                dialogue_text = match.group("dialogue").strip()
-                remaining = text[match.end():].strip()
+            # 检查是否有对话引号
+            has_quotes = re.search(r'[""\u201c\u201d]', text)
+            if not has_quotes:
+                # 无引号 → 降级为旁白
+                new_paragraphs.append({**para, "type": "narration", "speaker": "旁白", "emotion": None})
+                continue
 
-                # 旁白部分
-                if narration_text:
-                    new_paragraphs.append({
-                        **para,
-                        "text": narration_text,
+            # 分析文本结构：找出所有引号内的对话和引号外的旁白
+            segments = []
+            i = 0
+            in_quote = False
+            quote_char = None
+            current_text = ""
+
+            quote_chars = ['"', '"', '"', '\u201c', '\u201d', '"', '"']
+            while i < len(text):
+                char = text[i]
+                if char in quote_chars:
+                    if not in_quote:
+                        # 进入引号，保存之前的旁白
+                        if current_text.strip():
+                            segments.append(("narration", current_text.strip()))
+                        in_quote = True
+                        quote_char = char
+                        current_text = ""
+                    elif char == quote_char or char in ['\u201c', '\u201d']:
+                        # 退出引号，保存对话
+                        if current_text.strip():
+                            segments.append(("dialogue", current_text.strip()))
+                        in_quote = False
+                        quote_char = None
+                        current_text = ""
+                    else:
+                        current_text += char
+                else:
+                    current_text += char
+                i += 1
+
+            # 保存剩余文本
+            if current_text.strip():
+                segments.append(("narration" if not in_quote else "dialogue", current_text.strip()))
+
+            # 合并连续的同类型段落
+            merged_segments = []
+            for seg_type, seg_text in segments:
+                if merged_segments and merged_segments[-1][0] == seg_type:
+                    merged_segments[-1] = (seg_type, merged_segments[-1][1] + " " + seg_text)
+                else:
+                    merged_segments.append((seg_type, seg_text))
+
+            # 提取语音/情感特征（从所有旁白中）
+            voice_context = ""
+            detected_emotion = para.get("emotion")
+
+            for seg_type, seg_text in merged_segments:
+                if seg_type == "narration":
+                    voice_match = voice_pattern.search(seg_text)
+                    if voice_match:
+                        voice_context = voice_match.group(0)
+                        # 从语音描述推断情感
+                        emotion_match = emotion_pattern.search(voice_context)
+                        if emotion_match and not detected_emotion:
+                            emotion_word = emotion_match.group(0)
+                            if emotion_word in ("凶狠", "愤怒"):
+                                detected_emotion = "愤怒_强"
+                            elif emotion_word in ("嘶哑",):
+                                detected_emotion = "愤怒_中"
+                            elif emotion_word in ("温柔",):
+                                detected_emotion = "温柔_弱"
+                            elif emotion_word in ("冷淡", "冷漠"):
+                                detected_emotion = "冷漠_中"
+                            elif emotion_word in ("激动",):
+                                detected_emotion = "激动_强"
+                            elif emotion_word in ("悲伤",):
+                                detected_emotion = "悲伤_中"
+
+            # 为每个段落分配情感
+            prev_para = None
+            for seg_type, seg_text in merged_segments:
+                seg_para = {**para, "paragraph_index": len(new_paragraphs) + 1}
+
+                if seg_type == "narration":
+                    seg_para.update({
+                        "text": seg_text,
                         "type": "narration",
                         "speaker": "旁白",
                         "emotion": None,
-                        "paragraph_index": para["paragraph_index"],
+                        "voice_context": voice_context if voice_context else para.get("voice_context"),
+                    })
+                else:  # dialogue
+                    # 推断说话人
+                    speaker = para.get("speaker", "")
+                    if not speaker or speaker in ("旁白", "未识别", ""):
+                        # 从前一个旁白中提取说话人
+                        if prev_para and prev_para.get("type") == "narration":
+                            speaker_text = prev_para.get("text", "")[-30:]
+                            speaker_match = re.search(
+                                r'([\u4e00-\u9fff]{1,4})(?:(?:(?:温和|严厉|低声|轻声|大声|感慨|激动|颤抖|嘶哑|慢慢|缓缓)?(?:地)?)'
+                                r'(?:说|道|问|喊|叫|吼|听了|看着)',
+                                speaker_text
+                            )
+                            if speaker_match:
+                                speaker = speaker_match.group(1)
+
+                    seg_para.update({
+                        "text": seg_text,
+                        "type": "dialogue",
+                        "speaker": speaker if speaker else "旁白",
+                        "emotion": detected_emotion if detected_emotion else para.get("emotion", "平静_中"),
+                        "voice_context": voice_context,
                     })
 
-                # 对话部分
-                dialogue_para = {
-                    **para,
-                    "text": dialogue_text,
-                    "type": "dialogue",
-                    "paragraph_index": para["paragraph_index"],
-                }
-                # 如果原段落有说话人，对话继承；否则尝试从旁白中提取
-                orig_speaker = para.get("speaker", "")
-                if orig_speaker and orig_speaker not in ("旁白", "未识别"):
-                    dialogue_para["speaker"] = orig_speaker
-                else:
-                    # 从文本中提取角色名（冒号前的最后角色称呼）
-                    speaker_match = re.search(
-                        r'([\u4e00-\u9fff]{2,4})(?:说|道|问|答|喊|叫|吼|开口|回答)',
-                        narration_text[-10:]
-                    )
-                    if speaker_match:
-                        dialogue_para["speaker"] = speaker_match.group(1)
-
-                # 如果没有情感，推断为平静
-                if not dialogue_para.get("emotion"):
-                    dialogue_para["emotion"] = "平静_中"
-
-                new_paragraphs.append(dialogue_para)
-
-                # 如果后面还有剩余文本（如对话后的旁白）
-                if remaining:
-                    remaining_para = {**para, "text": remaining, "type": "narration",
-                                      "speaker": "旁白", "emotion": None}
-                    new_paragraphs.append(remaining_para)
-            else:
-                # 无法匹配引号 → 降级为 narration（DeepSeek 误标）
-                new_paragraphs.append({
-                    **para, "type": "narration", "speaker": "旁白", "emotion": None
-                })
+                new_paragraphs.append(seg_para)
+                prev_para = seg_para
 
         # 重新编号
         for i, p in enumerate(new_paragraphs):
