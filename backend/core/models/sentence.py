@@ -159,9 +159,6 @@ class Sentence(models.Model):
 
         # 确定句子类型
         sent_type = data.get("type", "narration")
-        # mixed 降级为 narration
-        if sent_type == "mixed":
-            sent_type = "narration"
 
         # 确定说话人
         speaker = data.get("speaker", "") or ""

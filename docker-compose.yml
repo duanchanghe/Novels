@@ -68,7 +68,6 @@ services:
       - audiobook-logs:/app/logs
       - audiobook-books:/books
       - ./backend/staticfiles:/app/staticfiles
-      - ./backend:/app:ro
     depends_on:
       postgres:
         condition: service_healthy

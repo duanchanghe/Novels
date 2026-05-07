@@ -503,7 +503,7 @@ class FullPipelineIntegrationTest:
             analyzer = DeepSeekAnalyzerService()
             result = analyzer.analyze_chapter(test_text)
 
-            assert "paragraphs" in result or "characters" in result, "分析结果缺少必要字段"
+            assert "sentences" in result or "characters" in result, "分析结果缺少必要字段"
 
             duration = time.perf_counter() - start
             return StageResult(

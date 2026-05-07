@@ -54,10 +54,9 @@ def test_chapter_analysis(chapter_id: int):
 
     # 分析结果统计
     sentences = result.get("sentences", [])
-    paragraphs = result.get("paragraphs", [])
     characters = result.get("characters", [])
 
-    items = sentences if sentences else paragraphs
+    items = sentences
 
     print(f"\n📊 分析结果统计:")
     print(f"   - 句子/段落数: {len(items)}")

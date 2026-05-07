@@ -124,14 +124,14 @@ class TestDeepSeekAnalyzerService:
 
     def test_extract_characters(self, analyzer):
         """测试角色提取"""
-        paragraphs = [
+        sentences = [
             {"speaker": "张三", "emotion": "高兴"},
             {"speaker": "张三", "emotion": "悲伤"},
             {"speaker": "李四", "emotion": "平静"},
             {"speaker": "旁白", "emotion": "平静"},
         ]
 
-        characters = analyzer._extract_characters(paragraphs)
+        characters = analyzer._extract_characters(sentences)
 
         # 验证角色数量
         assert len(characters) == 2
@@ -151,7 +151,7 @@ class TestDeepSeekAnalyzerService:
     def test_merge_role_aliases(self, analyzer):
         """测试角色别名合并"""
         result = {
-            "paragraphs": [
+            "sentences": [
                 {"speaker": "张三", "type": "dialogue", "emotion": "高兴"},
                 {"speaker": "张兄", "type": "dialogue", "emotion": "悲伤"},
             ],
@@ -163,9 +163,9 @@ class TestDeepSeekAnalyzerService:
 
         merged = analyzer._merge_role_aliases(result)
 
-        # 验证段落中的说话人被合并
-        for para in merged["paragraphs"]:
-            assert para["speaker"] == "张三"
+        # 验证句子中的说话人被合并
+        for sent in merged["sentences"]:
+            assert sent["speaker"] == "张三"
 
         # 验证角色列表中的对话次数被合并
         for char in merged["characters"]:
@@ -175,7 +175,7 @@ class TestDeepSeekAnalyzerService:
     def test_merge_role_aliases_extended(self, analyzer):
         """测试扩展的角色别名合并"""
         result = {
-            "paragraphs": [
+            "sentences": [
                 {"speaker": "师父", "type": "dialogue", "emotion": "严肃"},
                 {"speaker": "师傅", "type": "dialogue", "emotion": "严肃"},
                 {"speaker": "师尊", "type": "dialogue", "emotion": "严肃"},
@@ -188,16 +188,16 @@ class TestDeepSeekAnalyzerService:
         merged = analyzer._merge_role_aliases(result)
 
         # 验证所有称呼都被合并为"师父"
-        for para in merged["paragraphs"]:
-            assert para["speaker"] == "师父"
+        for sent in merged["sentences"]:
+            assert sent["speaker"] == "师父"
 
     @pytest.mark.asyncio
     async def test_analyze_text_with_mock(self, analyzer):
         """测试文本分析（Mock API）"""
         mock_response = {
-            "paragraphs": [
+            "sentences": [
                 {
-                    "paragraph_index": 1,
+                    "sentence_index": 1,
                     "text": "测试文本",
                     "type": "narration",
                     "speaker": "旁白",
@@ -212,25 +212,25 @@ class TestDeepSeekAnalyzerService:
 
             result = await analyzer.analyze_text("测试文本")
 
-            assert "paragraphs" in result
-            assert len(result["paragraphs"]) == 1
-            assert result["paragraphs"][0]["speaker"] == "旁白"
+            assert "sentences" in result
+            assert len(result["sentences"]) == 1
+            assert result["sentences"][0]["speaker"] == "旁白"
 
     @pytest.mark.asyncio
     async def test_analyze_text_long_text_chunking(self, analyzer):
         """测试长文本分片分析"""
         # 准备分片响应
         chunk1_response = {
-            "paragraphs": [
-                {"paragraph_index": 1, "text": "chunk1内容", "speaker": "张三", "type": "dialogue", "emotion": "平静"},
+            "sentences": [
+                {"sentence_index": 1, "text": "chunk1内容", "speaker": "张三", "type": "dialogue", "emotion": "平静"},
             ],
             "characters": [
                 {"name": "张三", "dialogue_count": 1, "aliases": [], "emotions": ["平静"]},
             ],
         }
         chunk2_response = {
-            "paragraphs": [
-                {"paragraph_index": 1, "text": "chunk2内容", "speaker": "李四", "type": "dialogue", "emotion": "高兴"},
+            "sentences": [
+                {"sentence_index": 1, "text": "chunk2内容", "speaker": "李四", "type": "dialogue", "emotion": "高兴"},
             ],
             "characters": [
                 {"name": "李四", "dialogue_count": 1, "aliases": [], "emotions": ["高兴"]},
@@ -244,8 +244,8 @@ class TestDeepSeekAnalyzerService:
             long_text = "chunk1内容\n" + "x" * analyzer.max_chunk_chars + "\nchunk2内容"
             result = await analyzer._full_analysis(long_text, None)
 
-            # 验证段落数量
-            assert len(result["paragraphs"]) == 2
+            # 验证句子数量
+            assert len(result["sentences"]) == 2
 
             # 验证角色数量
             character_names = [c["name"] for c in result.get("characters", [])]
@@ -257,7 +257,7 @@ class TestDeepSeekAnalyzerService:
         """测试空文本处理"""
         result = await analyzer.analyze_text("")
 
-        assert result["paragraphs"] == []
+        assert result["sentences"] == []
         assert result["characters"] == []
 
     @pytest.mark.asyncio
@@ -265,7 +265,7 @@ class TestDeepSeekAnalyzerService:
         """测试仅空白字符"""
         result = await analyzer.analyze_text("   \n\t  ")
 
-        assert result["paragraphs"] == []
+        assert result["sentences"] == []
         assert result["characters"] == []
 
     @pytest.mark.asyncio
@@ -277,8 +277,8 @@ class TestDeepSeekAnalyzerService:
         initial_requests = _cost_stats.request_count
         
         mock_response = {
-            "paragraphs": [
-                {"paragraph_index": 1, "text": "测试", "speaker": "旁白", "type": "narration", "emotion": "平静"},
+            "sentences": [
+                {"sentence_index": 1, "text": "测试", "speaker": "旁白", "type": "narration", "emotion": "平静"},
             ],
             "characters": [],
         }
@@ -370,7 +370,7 @@ class TestAnalysisCache:
         assert result is None
 
         # 测试缓存设置
-        test_result = {"paragraphs": [], "characters": []}
+        test_result = {"sentences": [], "characters": []}
         cache.set("test_text", test_result)
 
         # 测试缓存命中

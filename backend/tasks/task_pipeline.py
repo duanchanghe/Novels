@@ -777,7 +777,7 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             if not text or len(text.strip()) < 10:
                 logger.warning(f"[Chapter {chapter_id}] 文本内容过短，跳过分析")
                 chapter.status = ChapterStatus.ANALYZED
-                chapter.analysis_result = {"sentences": [], "paragraphs": [], "characters": []}
+                chapter.analysis_result = {"sentences": [], "characters": []}
                 # 清空句子模型
                 from core.models.sentence import Sentence
                 Sentence.save_chapter_sentences(chapter, [])
@@ -832,7 +832,7 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             logger.info(f"[Chapter {chapter_id}] 开始调用 DeepSeek 分析器，文本长度: {len(text)}")
             analyzer = DeepSeekAnalyzerService()
             result = analyzer.analyze_chapter(text, role_list=role_list)
-            sentences_data = result.get("sentences", result.get("paragraphs", []))
+            sentences_data = result.get("sentences", [])
             logger.info(f"[Chapter {chapter_id}] DeepSeek 分析返回: 句子={len(sentences_data)}, 角色={len(result.get('characters',[]))}")
 
             # ── 保存句子到 Sentence 模型 ──
@@ -935,7 +935,7 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
             else:
                 # 回退：从 analysis_result JSON 读取
                 analysis = chapter.analysis_result or {}
-                sentences = analysis.get("sentences", analysis.get("paragraphs", []))
+                sentences = analysis.get("sentences", [])
                 logger.info(
                     f"[Chapter {chapter_id}] 从 analysis_result 读取 {len(sentences)} 个句子"
                 )
@@ -1647,7 +1647,7 @@ def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
                 if not text or len(text.strip()) < 10:
                     logger.warning(f"[Chapter {chapter.id}] 文本过短，跳过分析")
                     chapter.status = ChapterStatus.ANALYZED
-                    chapter.analysis_result = {"sentences": [], "paragraphs": [], "characters": []}
+                    chapter.analysis_result = {"sentences": [], "characters": []}
                     # 清空句子模型
                     from core.models.sentence import Sentence
                     Sentence.save_chapter_sentences(chapter, [])
@@ -1721,7 +1721,7 @@ def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
 
                 # ── 保存句子到 Sentence 模型 ──
                 from core.models.sentence import Sentence
-                sentences_data = result.get("sentences", result.get("paragraphs", []))
+                sentences_data = result.get("sentences", [])
                 Sentence.save_chapter_sentences(chapter, sentences_data)
                 logger.info(
                     f"[Chapter {chapter.id}] 已保存 {len(sentences_data)} 个句子到 Sentence 模型"

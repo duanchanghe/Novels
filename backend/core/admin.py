@@ -414,7 +414,7 @@ class ChapterAdmin(admin.ModelAdmin):
     book_title.short_description = "所属书籍"
 
     def sentence_count(self, obj):
-        """获取句子数量（从 Sentence 模型读取）"""
+        """获取句子数量（从 Sentence 模型读取，兼容旧 paragraphs 结构）"""
         try:
             count = Sentence.objects.filter(chapter=obj).count()
             if count > 0:
@@ -423,8 +423,10 @@ class ChapterAdmin(admin.ModelAdmin):
             pass
         result = obj.analysis_result
         if result and isinstance(result, dict):
+            # 优先尝试新结构 sentences
             sentences = result.get("sentences", [])
-            return len(sentences) if sentences else 0
+            if sentences:
+                return len(sentences)
         return 0
     sentence_count.short_description = "句子数"
 
@@ -445,7 +447,7 @@ class ChapterAdmin(admin.ModelAdmin):
     character_count.short_description = "角色数"
 
     def sentences_display(self, obj):
-        """展示句子列表（从 Sentence 模型读取）"""
+        """展示句子列表（从 Sentence 模型读取，兼容旧 paragraphs 结构）"""
         try:
             db_sentences = list(
                 Sentence.objects.filter(chapter=obj).order_by("sentence_index")
@@ -461,6 +463,13 @@ class ChapterAdmin(admin.ModelAdmin):
             result = obj.analysis_result
             if result and isinstance(result, dict):
                 sentences = result.get("sentences", [])
+                            sentences.append({
+                                "sentence_index": p.get("paragraph_index", 0),
+                                "type": p.get("type", "narration"),
+                                "speaker": p.get("speaker", "旁白"),
+                                "emotion": p.get("emotion"),
+                                "text": p.get("text", ""),
+                            })
         if not sentences:
             return "-"
         

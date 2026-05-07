@@ -182,13 +182,13 @@ class E2ETestRunner:
             analyzer = DeepSeekAnalyzerService()
             result = await analyzer.analyze_text(test_text)
             
-            assert "paragraphs" in result, "分析结果缺少 paragraphs"
-            assert isinstance(result["paragraphs"], list), "paragraphs 不是列表"
+            assert "sentences" in result, "分析结果缺少 sentences"
+            assert isinstance(result["sentences"], list), "sentences 不是列表"
             
             characters = result.get("characters", [])
             self.log_result(
                 test_name, True,
-                f"分析成功: {len(result['paragraphs'])} 段落, {len(characters)} 角色"
+                f"分析成功: {len(result['sentences'])} 句子, {len(characters)} 角色"
             )
             return True
         except Exception as e:

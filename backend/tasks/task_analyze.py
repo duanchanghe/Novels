@@ -126,7 +126,7 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             if not text or len(text.strip()) < 10:
                 logger.warning(f"[Chapter {chapter_id}] 文本内容过短，跳过分析")
                 chapter.status = ChapterStatus.ANALYZED
-                chapter.analysis_result = {"paragraphs": [], "characters": []}
+                chapter.analysis_result = {"sentences": [], "characters": []}
                 db.commit()
                 return {
                     "chapter_id": chapter_id,
@@ -142,7 +142,7 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
 
             # ── 保存句子到 Sentence 模型 ──
             from core.models.sentence import Sentence
-            sentences_data = result.get("sentences", result.get("paragraphs", []))
+            sentences_data = result.get("sentences", [])
             Sentence.save_chapter_sentences(chapter, sentences_data)
             logger.info(
                 f"[Chapter {chapter_id}] 已保存 {len(sentences_data)} 个句子到 Sentence 模型"
