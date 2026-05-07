@@ -90,11 +90,11 @@ class TestSegmentModel:
             chapter_id=1,
             segment_index=0,
             text_content="Test segment content",
-            role="narrator"
+            speaker="narrator"
         )
         assert segment.chapter_id == 1
         assert segment.text_content == "Test segment content"
-        assert segment.role == "narrator"
+        assert segment.speaker == "narrator"
         assert segment.status == SegmentStatus.PENDING
 
 

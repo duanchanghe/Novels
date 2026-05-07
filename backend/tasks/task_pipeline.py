@@ -963,10 +963,10 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
 
             segments_created = 0
             for idx, sent in enumerate(sentences):
-                speaker = sent.get("speaker", "") or sent.get("role", "旁白")
+                speaker = sent.get("speaker", "") or ""
                 vc = speaker_cache.get(speaker, voice_mapper.get_voice_for_speaker(speaker))
 
-                if speaker not in ("旁白", "narrator", "未识别", "unknown"):
+                if speaker and speaker not in ("旁白", "narrator", "未识别", "unknown"):
                     logger.debug(
                         f"[Chapter {chapter_id}] 角色 '{speaker}' → 音色 {vc.get('voice_id', '?')}"
                     )
@@ -975,7 +975,7 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
                     chapter_id=chapter_id,
                     segment_index=idx,
                     text_content=sent.get("text", ""),
-                    role=speaker,
+                    speaker=speaker or "旁白",
                     emotion=sent.get("emotion", "neutral"),
                     voice_id=vc.get("voice_id", VoiceID.MALE_QN_QINGSE),
                     speed=vc.get("speed", 1.0),

@@ -157,13 +157,13 @@ class Sentence(models.Model):
         elif emotion_raw:
             emotion = emotion_raw.strip()
 
-        # 确定句子类型（兼容 paragraph_index 和 sentence_index）
+        # 确定句子类型
         sent_type = data.get("type", "narration")
-        # 兼容旧结构：mixed 降级为 narration
+        # mixed 降级为 narration
         if sent_type == "mixed":
             sent_type = "narration"
 
-        # 确定说话人及是否旁白
+        # 确定说话人
         speaker = data.get("speaker", "") or ""
         is_narrator = speaker in ("", "旁白", "narrator", "未识别", "未知")
 
@@ -174,8 +174,8 @@ class Sentence(models.Model):
         is_inner_thought = "内心独白" in markers
         is_system_prompt = "系统提示" in markers
 
-        # 获取句子索引（兼容新旧结构）
-        sentence_index = data.get("sentence_index", 0) or data.get("paragraph_index", 0) or 0
+        # 获取句子索引
+        sentence_index = data.get("sentence_index", 0) or 0
 
         return cls(
             chapter=chapter,

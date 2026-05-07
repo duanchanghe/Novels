@@ -150,7 +150,7 @@ class ChapterSegmentsView(APIView):
                 "chapter_id": seg.chapter_id,
                 "segment_index": seg.segment_index,
                 "text_content": seg.text_content,
-                "role": seg.role,
+                "speaker": seg.speaker,
                 "emotion": seg.emotion,
                 "status": seg.status,
                 "status_display": seg.get_status_display(),

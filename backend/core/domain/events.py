@@ -239,14 +239,14 @@ class SegmentCreatedEvent(DomainEvent):
     aggregate_id: Optional[int] = None
     chapter_id: int = 0
     segment_index: int = 0
-    role: str = ""
+    speaker: str = ""
 
     def _to_dict(self) -> Dict[str, Any]:
         return {
             "aggregate_id": self.aggregate_id,
             "chapter_id": self.chapter_id,
             "segment_index": self.segment_index,
-            "role": self.role,
+            "speaker": self.speaker,
         }
 
 

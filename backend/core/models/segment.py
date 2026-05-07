@@ -29,12 +29,12 @@ class AudioSegment(models.Model):
     text_content = models.TextField(verbose_name="文本内容")
     raw_text = models.TextField(blank=True, null=True, verbose_name="原始文本")
 
-    role = models.CharField(max_length=100, blank=True, null=True, verbose_name="角色名")
+    speaker = models.CharField(max_length=100, blank=True, null=True, verbose_name="说话人")
     emotion = models.CharField(max_length=50, blank=True, null=True, verbose_name="情感标注")
     emotion_intensity = models.CharField(max_length=20, blank=True, null=True, verbose_name="情感强度")
 
-    speed = models.CharField(max_length=20, default="normal", verbose_name="语速")
-    pause_after = models.CharField(max_length=20, blank=True, null=True, verbose_name="段后停顿")
+    speed = models.FloatField(default=1.0, verbose_name="语速")  # 1.0 = 正常速度
+    pause_after = models.FloatField(default=0.3, verbose_name="段后停顿(秒)")
     voice_id = models.CharField(max_length=100, blank=True, null=True, verbose_name="音色ID")
 
     status = models.CharField(
@@ -93,7 +93,7 @@ class AudioSegment(models.Model):
             "segment_index": self.segment_index,
             "text_content": self.text_content,
             "raw_text": self.raw_text,
-            "role": self.role,
+            "speaker": self.speaker,
             "emotion": self.emotion,
             "emotion_intensity": self.emotion_intensity,
             "speed": self.speed,

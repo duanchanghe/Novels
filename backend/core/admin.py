@@ -414,9 +414,8 @@ class ChapterAdmin(admin.ModelAdmin):
     book_title.short_description = "所属书籍"
 
     def sentence_count(self, obj):
-        """获取句子数量（优先从 Sentence 模型读取）"""
+        """获取句子数量（从 Sentence 模型读取）"""
         try:
-            from core.models.sentence import Sentence
             count = Sentence.objects.filter(chapter=obj).count()
             if count > 0:
                 return count
@@ -424,7 +423,7 @@ class ChapterAdmin(admin.ModelAdmin):
             pass
         result = obj.analysis_result
         if result and isinstance(result, dict):
-            sentences = result.get("sentences", result.get("paragraphs", []))
+            sentences = result.get("sentences", [])
             return len(sentences) if sentences else 0
         return 0
     sentence_count.short_description = "句子数"
@@ -446,7 +445,7 @@ class ChapterAdmin(admin.ModelAdmin):
     character_count.short_description = "角色数"
 
     def sentences_display(self, obj):
-        """展示句子列表（优先从 Sentence 模型读取）"""
+        """展示句子列表（从 Sentence 模型读取）"""
         try:
             db_sentences = list(
                 Sentence.objects.filter(chapter=obj).order_by("sentence_index")
@@ -461,7 +460,7 @@ class ChapterAdmin(admin.ModelAdmin):
         if not sentences:
             result = obj.analysis_result
             if result and isinstance(result, dict):
-                sentences = result.get("sentences", result.get("paragraphs", []))
+                sentences = result.get("sentences", [])
         if not sentences:
             return "-"
         
@@ -477,9 +476,8 @@ class ChapterAdmin(admin.ModelAdmin):
                 text += "..."
             
             type_color = {"narration": "#6c757d", "dialogue": "#0d6efd"}.get(s_type, "#6c757d")
-            index_key = "sentence_index" if "sentence_index" in s else "paragraph_index"
             
-            html += f'<tr><td style="padding:5px;border:1px solid #ddd;">{s.get(index_key, "?")}</td>'
+            html += f'<tr><td style="padding:5px;border:1px solid #ddd;">{s.get("sentence_index", "?")}</td>'
             html += f'<td style="padding:5px;border:1px solid #ddd;"><span style="background:{type_color};color:white;padding:2px 6px;border-radius:3px;font-size:10px;">{s_type}</span></td>'
             html += f'<td style="padding:5px;border:1px solid #ddd;">{speaker}</td>'
             html += f'<td style="padding:5px;border:1px solid #ddd;">{emotion}</td>'

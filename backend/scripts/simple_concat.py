@@ -15,6 +15,7 @@ django.setup()
 
 from core.models import Chapter, AudioSegment
 from core.models.segment import SegmentStatus
+from pydub import AudioSegment as PydubAudioSegment
 from datetime import datetime
 import uuid
 from io import BytesIO
@@ -23,7 +24,6 @@ from io import BytesIO
 def concat_audio(chapter_id: int):
     """拼接章节音频"""
     from services.svc_minio_storage import get_storage_service
-    from pydub import AudioSegment
     
     chapter = Chapter.objects.get(id=chapter_id)
     segments = chapter.segments.filter(status=SegmentStatus.SUCCESS).order_by('segment_index')
@@ -44,7 +44,7 @@ def concat_audio(chapter_id: int):
             audio_data = storage.download_file("books-audio", seg.audio_file_path)
             
             # 使用 pydub 加载
-            audio = AudioSegment.from_mp3(BytesIO(audio_data))
+            audio = PydubAudioSegment.from_mp3(BytesIO(audio_data))
             total_duration += len(audio)
             
             if combined is None:

@@ -390,7 +390,7 @@ class AudioPostprocessorService:
                         "pause_after": getattr(segment, "pause_hint", "normal"),
                         "duration_ms": len(audio),
                         "text": segment.text_content,
-                        "role": segment.role or "旁白",
+                        "speaker": segment.speaker or "旁白",
                     })
 
                 except Exception as e:
