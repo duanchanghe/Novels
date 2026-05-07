@@ -1954,7 +1954,7 @@ def generate_chapter_audio(self, chapter_id: int) -> Dict[str, Any]:
 
     from core.models import Book
     from core.models.book import BookStatus, GenerationMode
-    from core.models.chapter import ChapterStatus
+    from core.models.chapter import Chapter, ChapterStatus
 
     with get_db_context() as db:
         chapter = db.query(Chapter).filter(id=chapter_id).first()

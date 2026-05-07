@@ -589,13 +589,13 @@ class DeepSeekAnalyzerService:
 对于旁白+对话混合的段落（如"她嘶哑地吼道："你疯了！""），采用以下策略：
 
 策略A — 若前后情感一致，拆为独立段落：
-  {"type": "narration", "text": "她嘶哑地吼道："},
-  {"type": "dialogue", "text": "你疯了！", "speaker": "她", "emotion": "愤怒_强"}
+  {{"type": "narration", "text": "她嘶哑地吼道："}},
+  {{"type": "dialogue", "text": "你疯了！", "speaker": "她", "emotion": "愤怒_强"}}
 
 策略B — 若旁白描写了语音特征（嘶哑、压低声音、颤抖等），拆分时**对话段落需承接旁白的情感强度**，
   同时将语音特征写入 special_markers 供 TTS 参考：
-  {"type": "mixed", ..., "voice_context": "嘶哑"},
-  {"type": "dialogue", ..., "emotion": "愤怒_强", "voice_context": "嘶哑"}
+  {{"type": "mixed", ..., "voice_context": "嘶哑"}},
+  {{"type": "dialogue", ..., "emotion": "愤怒_强", "voice_context": "嘶哑"}}
 
 策略C — 复杂混合句（旁白→对话→旁白→对话），按语义块拆分为多个独立段落。
 
@@ -720,6 +720,13 @@ class DeepSeekAnalyzerService:
                 parts.append(name)
 
         return "，".join(parts) if parts else "未知"
+
+    @staticmethod
+    def _escape_format_braces(text: str) -> str:
+        """转义文本中的花括号，避免 str.format() 报 KeyError"""
+        if not text:
+            return ""
+        return text.replace("{", "{{").replace("}", "}}")
 
     def __init__(self, use_cache: bool = True):
         self.api_key = settings.DEEPSEEK_API_KEY
@@ -962,10 +969,12 @@ class DeepSeekAnalyzerService:
         if len(chunks) == 1:
             # 短文本，单次调用
             role_str = role_list if isinstance(role_list, str) else (", ".join(role_list) if role_list else "未知")
+            safe_text = self._escape_format_braces(text)
+            safe_role = self._escape_format_braces(role_str)
             result = await self._call_deepseek(
                 self.FULL_ANALYSIS_PROMPT.format(
-                    text=text,
-                    role_list=role_str,
+                    text=safe_text,
+                    role_list=safe_role,
                 )
             )
             
@@ -986,10 +995,12 @@ class DeepSeekAnalyzerService:
                 logger.info(f"分析文本片段 {i + 1}/{len(chunks)}")
                 known_roles = list(all_characters.keys()) if all_characters else role_list
                 role_str = known_roles if isinstance(known_roles, str) else (", ".join(known_roles) if known_roles else "未知")
+                safe_chunk = self._escape_format_braces(chunk)
+                safe_role = self._escape_format_braces(role_str)
                 result = await self._call_deepseek(
                     self.FULL_ANALYSIS_PROMPT.format(
-                        text=chunk,
-                        role_list=role_str,
+                        text=safe_chunk,
+                        role_list=safe_role,
                     )
                 )
 
@@ -1333,6 +1344,101 @@ class DeepSeekAnalyzerService:
         result["characters"] = final_characters
         return result
 
+    @staticmethod
+    def _split_mixed_paragraphs(result: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        后处理：将 mixed 类型段落拆分为 narration + dialogue。
+
+        DeepSeek 有时标记段落为 mixed 但未真正拆分，
+        此方法根据中文对话模式做确定性拆分。
+
+        例：
+          她说：“你疯了！”  →  她说： | 你疯了！
+          他温和地问：“为什么？”  →  他温和地问： | 为什么？
+        """
+        paragraphs = result.get("paragraphs", [])
+        new_paragraphs = []
+        # 说话引号模式：以说/道/问/答/喊/叫/吼等结尾 + ：或, + “...”或"..."
+        dialogue_re = re.compile(
+            r'(?P<narration>.+?(?:说|道|问|答|喊|叫|吼|哭|笑|骂|开口|'
+            r'回答|吩咐|嘱咐|感慨|抱怨|追问|喃喃|大叫|喊道|说道|'
+            r'低声|轻声|大声|温和|严厉|感叹|重复'
+            r'))'
+            r'[：:\s]*'
+            r'[「『【\(（]?\s*'
+            r'[\u201c\u201d\"](?P<dialogue>[^\u201c\u201d\"]+?)[\u201c\u201d\"]'
+        )
+
+        for para in paragraphs:
+            para_type = para.get("type", "narration")
+            text = para.get("text", "")
+
+            if para_type != "mixed" or not text:
+                new_paragraphs.append(para)
+                continue
+
+            # 尝试匹配说话引号
+            match = dialogue_re.search(text)
+            if match:
+                narration_text = match.group("narration").strip()
+                dialogue_text = match.group("dialogue").strip()
+                remaining = text[match.end():].strip()
+
+                # 旁白部分
+                if narration_text:
+                    new_paragraphs.append({
+                        **para,
+                        "text": narration_text,
+                        "type": "narration",
+                        "speaker": "旁白",
+                        "emotion": None,
+                        "paragraph_index": para["paragraph_index"],
+                    })
+
+                # 对话部分
+                dialogue_para = {
+                    **para,
+                    "text": dialogue_text,
+                    "type": "dialogue",
+                    "paragraph_index": para["paragraph_index"],
+                }
+                # 如果原段落有说话人，对话继承；否则尝试从旁白中提取
+                orig_speaker = para.get("speaker", "")
+                if orig_speaker and orig_speaker not in ("旁白", "未识别"):
+                    dialogue_para["speaker"] = orig_speaker
+                else:
+                    # 从文本中提取角色名（冒号前的最后角色称呼）
+                    speaker_match = re.search(
+                        r'([\u4e00-\u9fff]{2,4})(?:说|道|问|答|喊|叫|吼|开口|回答)',
+                        narration_text[-10:]
+                    )
+                    if speaker_match:
+                        dialogue_para["speaker"] = speaker_match.group(1)
+
+                # 如果没有情感，推断为平静
+                if not dialogue_para.get("emotion"):
+                    dialogue_para["emotion"] = "平静_中"
+
+                new_paragraphs.append(dialogue_para)
+
+                # 如果后面还有剩余文本（如对话后的旁白）
+                if remaining:
+                    remaining_para = {**para, "text": remaining, "type": "narration",
+                                      "speaker": "旁白", "emotion": None}
+                    new_paragraphs.append(remaining_para)
+            else:
+                # 无法匹配引号 → 降级为 narration（DeepSeek 误标）
+                new_paragraphs.append({
+                    **para, "type": "narration", "speaker": "旁白", "emotion": None
+                })
+
+        # 重新编号
+        for i, p in enumerate(new_paragraphs):
+            p["paragraph_index"] = i + 1
+
+        result["paragraphs"] = new_paragraphs
+        return result
+
     def analyze_chapter(self, text: str, role_list=None) -> Dict[str, Any]:
         """
         同步分析章节（用于 Celery 任务）
@@ -1370,6 +1476,9 @@ class DeepSeekAnalyzerService:
                 result["characters"] = []
 
             result = self._merge_role_aliases(result)
+
+            # 后处理：将 mixed 类型的段落拆分为 narration + dialogue
+            result = self._split_mixed_paragraphs(result)
 
             if self.use_cache:
                 _analysis_cache.set(text, result)
@@ -1595,10 +1704,12 @@ class DeepSeekAnalyzerService:
         if len(chunks) == 1:
             # 短文本，单次调用
             role_str = role_list if isinstance(role_list, str) else (", ".join(role_list) if role_list else "未知")
+            safe_text = self._escape_format_braces(text)
+            safe_role = self._escape_format_braces(role_str)
             result = self._call_deepseek_sync(
                 self.FULL_ANALYSIS_PROMPT.format(
-                    text=text,
-                    role_list=role_str,
+                    text=safe_text,
+                    role_list=safe_role,
                 )
             )
             _cost_stats.add(tokens=len(text) // 4, cost=len(text) // 4 * self.input_price / 1000)
@@ -1613,10 +1724,12 @@ class DeepSeekAnalyzerService:
                 logger.info(f"分析文本片段 {i + 1}/{len(chunks)}")
                 known_roles = list(all_characters.keys()) if all_characters else role_list
                 role_str = known_roles if isinstance(known_roles, str) else (", ".join(known_roles) if known_roles else "未知")
+                safe_chunk = self._escape_format_braces(chunk)
+                safe_role = self._escape_format_braces(role_str)
                 result = self._call_deepseek_sync(
                     self.FULL_ANALYSIS_PROMPT.format(
-                        text=chunk,
-                        role_list=role_str,
+                        text=safe_chunk,
+                        role_list=safe_role,
                     )
                 )
 

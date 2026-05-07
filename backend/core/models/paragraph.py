@@ -175,7 +175,7 @@ class Paragraph(models.Model):
             emotion=emotion or None,
             emotion_intensity=intensity or None,
             polyphone_fixes=data.get("polyphone_fixes") or [],
-            voice_context=data.get("voice_context", ""),
+            voice_context=data.get("voice_context") or "",
             special_markers=markers,
             is_ancient_text=is_ancient_text,
             is_poetry=is_poetry,
