@@ -28,7 +28,7 @@ from .models.publish import PublishRecord, PublishStatus
 from .models.voice import VoiceProfile, RoleType
 from .models.task import TTSTask, TaskStatus
 from .models.character import Character, CharacterStatus, GenderType
-from .models.paragraph import Paragraph, ParagraphType, EmotionType, EmotionIntensity
+from .models.sentence import Sentence, SentenceType, EmotionType, EmotionIntensity
 from .models.sound_effect import (
     SoundEffect, SoundEffectUsage, SoundEffectCollection, SoundEffectCollectionItem,
     SoundEffectType, SoundLayer, SoundPriority, SoundSource, SoundEffectStatus
@@ -317,7 +317,7 @@ class ChapterAdmin(admin.ModelAdmin):
         "chapter_index",         # 章节序号
         "title",                 # 章节标题
         "status_badge",          # 状态徽章
-        "paragraph_count",       # 段落数量
+        "sentence_count",        # 句子数量
         "character_count",       # 角色数量
         "audio_duration",        # 音频时长
         "created_at",            # 创建时间
@@ -338,7 +338,7 @@ class ChapterAdmin(admin.ModelAdmin):
         "created_at",
         "updated_at",
         "analysis_result",   # 分析结果（JSON格式，由AI生成）
-        "paragraphs_display", # 段落列表（自定义方法）
+        "sentences_display", # 句子列表（自定义方法）
     ]
 
     ordering = ["book", "chapter_index"]  # 按书籍分组，再按章节序号排序
@@ -365,7 +365,7 @@ class ChapterAdmin(admin.ModelAdmin):
             "description": "DeepSeek AI 分析得出的章节信息",
             "fields": (
                 "analysis_result",    # AI 分析结果（JSON格式）
-                "paragraphs_display", # 段落列表
+                "sentences_display",  # 句子列表
                 "characters",         # 识别出的角色列表
             )
         }),
@@ -413,21 +413,21 @@ class ChapterAdmin(admin.ModelAdmin):
         return obj.book.title if obj.book else "-"
     book_title.short_description = "所属书籍"
 
-    def paragraph_count(self, obj):
-        """获取段落数量（优先从 Paragraph 模型读取）"""
+    def sentence_count(self, obj):
+        """获取句子数量（优先从 Sentence 模型读取）"""
         try:
-            from core.models.paragraph import Paragraph
-            count = Paragraph.objects.filter(chapter=obj).count()
+            from core.models.sentence import Sentence
+            count = Sentence.objects.filter(chapter=obj).count()
             if count > 0:
                 return count
         except Exception:
             pass
         result = obj.analysis_result
         if result and isinstance(result, dict):
-            paragraphs = result.get("paragraphs", [])
-            return len(paragraphs) if paragraphs else 0
+            sentences = result.get("sentences", result.get("paragraphs", []))
+            return len(sentences) if sentences else 0
         return 0
-    paragraph_count.short_description = "段落数"
+    sentence_count.short_description = "句子数"
 
     def character_count(self, obj):
         """获取角色数量（从 Character 模型统计）"""
@@ -445,51 +445,51 @@ class ChapterAdmin(admin.ModelAdmin):
         return 0
     character_count.short_description = "角色数"
 
-    def paragraphs_display(self, obj):
-        """展示段落列表（优先从 Paragraph 模型读取）"""
+    def sentences_display(self, obj):
+        """展示句子列表（优先从 Sentence 模型读取）"""
         try:
-            from core.models.paragraph import Paragraph
-            db_paragraphs = list(
-                Paragraph.objects.filter(chapter=obj).order_by("paragraph_index")
+            db_sentences = list(
+                Sentence.objects.filter(chapter=obj).order_by("sentence_index")
             )
-            if db_paragraphs:
-                paragraphs = [p.to_dict() for p in db_paragraphs]
+            if db_sentences:
+                sentences = [s.to_dict() for s in db_sentences]
             else:
-                paragraphs = []
+                sentences = []
         except Exception:
-            paragraphs = []
+            sentences = []
 
-        if not paragraphs:
+        if not sentences:
             result = obj.analysis_result
             if result and isinstance(result, dict):
-                paragraphs = result.get("paragraphs", [])
-        if not paragraphs:
+                sentences = result.get("sentences", result.get("paragraphs", []))
+        if not sentences:
             return "-"
         
         html = '<table style="width:100%; border-collapse: collapse;">'
         html += '<tr style="background:#f0f0f0;"><th style="padding:5px;border:1px solid #ddd;">#</th><th style="padding:5px;border:1px solid #ddd;">类型</th><th style="padding:5px;border:1px solid #ddd;">说话人</th><th style="padding:5px;border:1px solid #ddd;">情感</th><th style="padding:5px;border:1px solid #ddd;">内容预览</th></tr>'
         
-        for p in paragraphs[:20]:  # 最多显示20个段落
-            p_type = p.get("type", "narration")
-            speaker = p.get("speaker", "旁白")
-            emotion = p.get("emotion") or "-"
-            text = p.get("text", "")[:50]
-            if len(p.get("text", "")) > 50:
+        for s in sentences[:20]:  # 最多显示20个句子
+            s_type = s.get("type", "narration")
+            speaker = s.get("speaker", "旁白")
+            emotion = s.get("emotion") or "-"
+            text = s.get("text", "")[:50]
+            if len(s.get("text", "")) > 50:
                 text += "..."
             
-            type_color = {"narration": "#6c757d", "dialogue": "#0d6efd", "mixed": "#ffc107"}.get(p_type, "#6c757d")
+            type_color = {"narration": "#6c757d", "dialogue": "#0d6efd"}.get(s_type, "#6c757d")
+            index_key = "sentence_index" if "sentence_index" in s else "paragraph_index"
             
-            html += f'<tr><td style="padding:5px;border:1px solid #ddd;">{p.get("paragraph_index", "?")}</td>'
-            html += f'<td style="padding:5px;border:1px solid #ddd;"><span style="background:{type_color};color:white;padding:2px 6px;border-radius:3px;font-size:10px;">{p_type}</span></td>'
+            html += f'<tr><td style="padding:5px;border:1px solid #ddd;">{s.get(index_key, "?")}</td>'
+            html += f'<td style="padding:5px;border:1px solid #ddd;"><span style="background:{type_color};color:white;padding:2px 6px;border-radius:3px;font-size:10px;">{s_type}</span></td>'
             html += f'<td style="padding:5px;border:1px solid #ddd;">{speaker}</td>'
             html += f'<td style="padding:5px;border:1px solid #ddd;">{emotion}</td>'
             html += f'<td style="padding:5px;border:1px solid #ddd;font-size:11px;">{text}</td></tr>'
         
         html += '</table>'
-        if len(paragraphs) > 20:
-            html += f'<p style="color:#666;">... 共 {len(paragraphs)} 个段落</p>'
+        if len(sentences) > 20:
+            html += f'<p style="color:#666;">... 共 {len(sentences)} 个句子</p>'
         return format_html(html)
-    paragraphs_display.short_description = "段落列表"
+    sentences_display.short_description = "句子列表"
 
     def audio_duration(self, obj):
         """格式化显示音频时长"""
@@ -1549,25 +1549,25 @@ class SoundEffectCollectionItemAdmin(admin.ModelAdmin):
 
 
 # ===========================================
-# Paragraph（段落）
+# Sentence（句子）
 # ===========================================
 
-@admin.register(Paragraph)
-class ParagraphAdmin(admin.ModelAdmin):
-    """段落管理"""
+@admin.register(Sentence)
+class SentenceAdmin(admin.ModelAdmin):
+    """句子管理"""
 
     list_display = [
         "id",
         "chapter_info",
-        "paragraph_index",
+        "sentence_index",
         "text_preview",
-        "paragraph_type",
+        "sentence_type",
         "speaker",
         "emotion_display",
         "created_at",
     ]
     list_filter = [
-        "paragraph_type",
+        "sentence_type",
         "emotion",
         "emotion_intensity",
         "is_narrator",
@@ -1580,16 +1580,16 @@ class ParagraphAdmin(admin.ModelAdmin):
         "text",
         "speaker",
     ]
-    ordering = ["chapter", "paragraph_index"]
+    ordering = ["chapter", "sentence_index"]
     list_select_related = ["chapter"]
     list_per_page = 50
 
     fieldsets = [
         ("关联信息", {
-            "fields": ["chapter", "paragraph_index"],
+            "fields": ["chapter", "sentence_index"],
         }),
         ("内容信息", {
-            "fields": ["text", "paragraph_type"],
+            "fields": ["text", "sentence_type"],
         }),
         ("说话人信息", {
             "fields": ["speaker", "is_narrator"],

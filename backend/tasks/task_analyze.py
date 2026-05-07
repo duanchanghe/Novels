@@ -140,12 +140,12 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             analyzer = DeepSeekAnalyzerService()
             result = analyzer.analyze_chapter(text)
 
-            # ── 保存段落到 Paragraph 模型 ──
-            from core.models.paragraph import Paragraph
-            paragraphs_data = result.get("paragraphs", [])
-            Paragraph.save_chapter_paragraphs(chapter, paragraphs_data)
+            # ── 保存句子到 Sentence 模型 ──
+            from core.models.sentence import Sentence
+            sentences_data = result.get("sentences", result.get("paragraphs", []))
+            Sentence.save_chapter_sentences(chapter, sentences_data)
             logger.info(
-                f"[Chapter {chapter_id}] 已保存 {len(paragraphs_data)} 个段落到 Paragraph 模型"
+                f"[Chapter {chapter_id}] 已保存 {len(sentences_data)} 个句子到 Sentence 模型"
             )
 
             # ── 保存角色到 Character 模型 ──
@@ -162,10 +162,11 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             chapter.status = ChapterStatus.ANALYZED
             db.commit()
 
-            logger.info(f"章节分析完成: {chapter_id}, 识别角色: {len(chapter.characters)}")
+            logger.info(f"章节分析完成: {chapter_id}, 识别角色: {len(chapter.characters)}, 句子数: {len(sentences_data)}")
             return {
                 "chapter_id": chapter_id,
                 "characters": chapter.characters,
+                "sentences_count": len(sentences_data),
                 "success": True,
             }
 

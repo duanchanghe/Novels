@@ -85,42 +85,76 @@ class VoiceID:
 # ===========================================
 # 角色 → 音色配置映射表（唯一来源）
 # ===========================================
+# 重要：每个角色类型都有独特的音色配置，避免多个角色用同一音色
 
 ROLE_VOICE_MAP = {
-    # ── 旁白/叙述 ──
+    # ── 旁白/叙述 ──（使用沉稳的男声作为旁白）
     "旁白":     {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
     "叙述":     {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
     "描写":     {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
     "narrator": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
 
-    # ── 男性角色 ──
+    # ── 男性主角音色（使用独特的音色组合） ──
+    # 普通青年男主：清澈阳光
     "男主":       {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
     "男性主角":   {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
     "男":         {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
     "男性":       {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
     "male":       {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
     "male-young": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "male-adult": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
+    "male-hero":  {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
+    "male-protagonist": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
 
-    # ── 女性角色 ──
-    "女主":         {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "女性主角":     {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "女":           {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "女性":         {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "female":       {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "female-young": {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "female-adult": {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
+    # 温柔男主：温润磁性
+    "温柔男主":   {"voice_id": VoiceID.GENTLEMAN, "speed": 0.95, "pitch": -0.05, "emotion": "gentle"},
+    "暖男":       {"voice_id": VoiceID.GENTLEMAN, "speed": 0.95, "pitch": -0.05, "emotion": "gentle"},
+    "暖男角色":   {"voice_id": VoiceID.GENTLEMAN, "speed": 0.95, "pitch": -0.05, "emotion": "gentle"},
 
-    # ── 年长角色 ──
+    # 精英男主：商务气质
+    "精英男主":   {"voice_id": VoiceID.MALE_QN_JINGYING, "speed": 1.0, "pitch": 0.05, "emotion": "neutral"},
+    "精英男性":   {"voice_id": VoiceID.MALE_QN_JINGYING, "speed": 1.0, "pitch": 0.05, "emotion": "neutral"},
+
+    # 成熟男性
+    "male-adult": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"},
+    "成熟男性":   {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"},
+
+    # ── 女性主角音色（使用独特的音色组合） ──
+    # 甜美女主
+    "女主":         {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},
+    "女性主角":     {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},
+    "女":           {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},
+    "女性":         {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},
+    "female":       {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},
+    "female-sweet": {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},
+    "female-heroine": {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},
+    "female-protagonist": {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},
+
+    # 年轻少女
+    "female-young": {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.05, "pitch": 0.1, "emotion": "happy"},
+    "少女":         {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.05, "pitch": 0.1, "emotion": "happy"},
+    "女主少女":     {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.05, "pitch": 0.1, "emotion": "happy"},
+
+    # 御姐/成熟女性
+    "御姐":     {"voice_id": VoiceID.FEMALE_YUJIE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
+    "熟女":     {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"},
+    "女强人":   {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 1.0, "pitch": 0, "emotion": "serious"},
+    "female-adult": {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"},
+    "成熟女性":  {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"},
+
+    # ── 年长角色 ──（使用独特的老人音色）
     "老人":     {"voice_id": VoiceID.HUMOROUS_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
     "老者":     {"voice_id": VoiceID.HUMOROUS_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
     "老爷爷":   {"voice_id": VoiceID.HUMOROUS_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
     "老先生":   {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
+    "male-elderly":   {"voice_id": VoiceID.HUMOROUS_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
+    "male-old": {"voice_id": VoiceID.HUMOROUS_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
+
+    # 年长女性
     "老者女性": {"voice_id": VoiceID.KIND_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
     "老妇":     {"voice_id": VoiceID.KIND_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
     "奶奶":     {"voice_id": VoiceID.KIND_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-    "male-elderly":   {"voice_id": VoiceID.HUMOROUS_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
     "female-elderly": {"voice_id": VoiceID.KIND_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
+    "female-old": {"voice_id": VoiceID.KIND_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
 
     # ── 儿童/少年角色 ──
     "儿童":   {"voice_id": VoiceID.LOVELY_GIRL, "speed": 1.1, "pitch": 0.2, "emotion": "happy"},
@@ -128,48 +162,65 @@ ROLE_VOICE_MAP = {
     "男孩":   {"voice_id": VoiceID.CLEVER_BOY, "speed": 1.1, "pitch": 0.1, "emotion": "neutral"},
     "女孩":   {"voice_id": VoiceID.LOVELY_GIRL, "speed": 1.1, "pitch": 0.2, "emotion": "happy"},
     "少年":   {"voice_id": VoiceID.MALE_QN_DAXUESHENG, "speed": 1.05, "pitch": 0.1, "emotion": "neutral"},
-    "少女":   {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.05, "pitch": 0.1, "emotion": "happy"},
     "female-child": {"voice_id": VoiceID.LOVELY_GIRL, "speed": 1.1, "pitch": 0.2, "emotion": "happy"},
 
-    # ── 反派角色 ──
+    # ── 反派角色 ──（使用独特的霸道/阴沉音色）
     "反派":       {"voice_id": VoiceID.MALE_QN_BADAO, "speed": 0.95, "pitch": 0.1, "emotion": "serious"},
     "坏人":       {"voice_id": VoiceID.MALE_QN_BADAO, "speed": 0.95, "pitch": 0.1, "emotion": "serious"},
     "boss":       {"voice_id": VoiceID.MALE_QN_BADAO, "speed": 0.9, "pitch": 0.15, "emotion": "serious"},
     "male-deep":  {"voice_id": VoiceID.MALE_QN_BADAO, "speed": 0.95, "pitch": 0.1, "emotion": "serious"},
     "male-villain": {"voice_id": VoiceID.MALE_QN_BADAO, "speed": 0.95, "pitch": 0.1, "emotion": "serious"},
 
-    # ── 御姐/成熟女性 ──
-    "御姐":     {"voice_id": VoiceID.FEMALE_YUJIE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "熟女":     {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"},
-    "女强人":   {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 1.0, "pitch": 0, "emotion": "serious"},
-
-    # ── 网络小说特有角色 ──
+    # ── 玄幻/仙侠角色（使用独特的音色组合） ──
+    # 高人/仙尊类（空灵稳重）
     "仙尊": {"voice_id": VoiceID.GENTLEMAN, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-    "魔帝": {"voice_id": VoiceID.MALE_QN_BADAO, "speed": 0.95, "pitch": 0.05, "emotion": "serious"},
-    "剑圣": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "道祖": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-    "长老": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
+    "道祖": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.85, "pitch": -0.15, "emotion": "serious"},
     "宗主": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.9, "pitch": -0.05, "emotion": "serious"},
     "掌门": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 0.95, "pitch": -0.05, "emotion": "serious"},
+    "长老": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
+
+    # 霸道类（魔帝/魔尊）
+    "魔帝": {"voice_id": VoiceID.MALE_QN_BADAO, "speed": 0.95, "pitch": 0.05, "emotion": "serious"},
+    "魔尊": {"voice_id": VoiceID.MALE_QN_BADAO, "speed": 0.95, "pitch": 0.05, "emotion": "serious"},
+    "魔王": {"voice_id": VoiceID.MALE_QN_BADAO, "speed": 0.9, "pitch": 0.1, "emotion": "serious"},
+
+    # 普通男性修炼者
     "前辈": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"},
     "师兄": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "师弟": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.05, "pitch": 0.05, "emotion": "neutral"},
+    "师弟": {"voice_id": VoiceID.MALE_QN_DAXUESHENG, "speed": 1.05, "pitch": 0.05, "emotion": "neutral"},
+    "徒弟": {"voice_id": VoiceID.MALE_QN_DAXUESHENG, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
+    "剑圣": {"voice_id": VoiceID.GENTLEMAN, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
+    "剑修": {"voice_id": VoiceID.GENTLEMAN, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
+
+    # 师父类（稳重）
     "师父": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
     "师傅": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-    "徒弟": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
+
+    # ── 女性仙侠角色 ──
     "圣女": {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 0.95, "pitch": -0.05, "emotion": "gentle"},
     "仙女": {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 0.95, "pitch": 0, "emotion": "gentle"},
     "仙子": {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 0.95, "pitch": 0, "emotion": "gentle"},
-    "妖女": {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.05, "pitch": 0.05, "emotion": "happy"},
+    "妖女": {"voice_id": VoiceID.FEMALE_YUJIE, "speed": 1.05, "pitch": 0.05, "emotion": "happy"},
     "魔女": {"voice_id": VoiceID.FEMALE_YUJIE, "speed": 1.0, "pitch": 0.05, "emotion": "serious"},
     "女帝": {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 0.95, "pitch": -0.05, "emotion": "serious"},
 
-    # ── 主角别名 ──
-    "male-hero":         {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "male-protagonist":  {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "female-heroine":    {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "female-protagonist":{"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "female-sweet":      {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0, "emotion": "happy"},
+    # ── 皇室/贵族角色 ──
+    "陛下": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.9, "pitch": -0.1, "emotion": "serious"},
+    "皇帝": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.9, "pitch": -0.1, "emotion": "serious"},
+    "皇上": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.9, "pitch": -0.1, "emotion": "serious"},
+    "太子": {"voice_id": VoiceID.MALE_QN_JINGYING, "speed": 0.95, "pitch": 0, "emotion": "neutral"},
+    "公主": {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 0.95, "pitch": 0, "emotion": "happy"},
+
+    # ── 家庭角色 ──
+    "父亲": {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"},
+    "母亲": {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 0.95, "pitch": -0.05, "emotion": "gentle"},
+    "夫人": {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"},
+    "少爷": {"voice_id": VoiceID.MALE_QN_JINGYING, "speed": 1.0, "pitch": 0.05, "emotion": "neutral"},
+    "小姐": {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},
+    "哥哥": {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
+    "姐姐": {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},
+    "弟弟": {"voice_id": VoiceID.MALE_QN_DAXUESHENG, "speed": 1.05, "pitch": 0.05, "emotion": "neutral"},
+    "妹妹": {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.05, "pitch": 0.1, "emotion": "happy"},
 
     # ── 旁白别名（英文） ──
     "male-narrator":   {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
@@ -187,10 +238,8 @@ ROLE_VOICE_MAP = {
     "农夫": {"voice_id": VoiceID.HUMOROUS_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
     "仆人": {"voice_id": VoiceID.MALE_QN_DAXUESHENG, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
 
-    # ── 默认映射 ──
+    # ── 默认映射（放在最后兜底） ──
     "未识别": {"voice_id": VoiceID.DEFAULT, "speed": 1.0, "pitch": 0, "emotion": "neutral"},
-    "male-old": {"voice_id": VoiceID.HUMOROUS_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
-    "female-old": {"voice_id": VoiceID.KIND_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},
 }
 
 # 默认配置（未识别角色时使用）

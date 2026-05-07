@@ -1,22 +1,27 @@
 # ===========================================
-# Models - Paragraph
+# Models - Sentence (句子级分析)
 # ===========================================
 
 """
-段落数据模型
+句子数据模型
 
-用于存储章节的段落信息，每个段落包含文本类型、说话人、情感等。
+用于存储章节的句子级分析结果，每个句子包含文本类型、说话人、情感等。
+这是对传统"段落级"分析的升级，确保旁白和对话严格分离。
+
+主要改进：
+- 句子级拆分：每个句子独立存储
+- 严格类型：dialogue（对话）/ narration（旁白）
+- 说话人明确：对话必须有具体角色名，旁白固定为"旁白"
 """
 
 from django.db import models
 from .chapter import Chapter
 
 
-class ParagraphType(models.TextChoices):
-    """段落类型"""
+class SentenceType(models.TextChoices):
+    """句子类型"""
     NARRATION = "narration", "旁白"
     DIALOGUE = "dialogue", "对话"
-    MIXED = "mixed", "混合"
 
 
 class EmotionType(models.TextChoices):
@@ -40,38 +45,39 @@ class EmotionIntensity(models.TextChoices):
     STRONG = "strong", "强"
 
 
-class Paragraph(models.Model):
+class Sentence(models.Model):
     """
-    段落模型
+    句子模型
 
-    存储章节的每个段落，包含文本、类型、说话人、情感等信息。
+    存储章节的每个句子，包含文本、类型、说话人、情感等信息。
+    替代传统的"段落级"存储，支持句子级严格拆分。
     """
 
     # 关联信息
     chapter = models.ForeignKey(
         Chapter,
         on_delete=models.CASCADE,
-        related_name="paragraphs",
+        related_name="sentences",
         verbose_name="所属章节"
     )
 
     # 位置信息
-    paragraph_index = models.IntegerField(verbose_name="段落序号")
+    sentence_index = models.IntegerField(verbose_name="句子序号")
 
     # 内容信息
-    text = models.TextField(verbose_name="段落文本")
-    paragraph_type = models.CharField(
+    text = models.TextField(verbose_name="句子文本")
+    sentence_type = models.CharField(
         max_length=20,
-        choices=ParagraphType.choices,
-        default=ParagraphType.NARRATION,
-        verbose_name="段落类型"
+        choices=SentenceType.choices,
+        default=SentenceType.NARRATION,
+        verbose_name="句子类型"
     )
 
     # 说话人信息
     speaker = models.CharField(max_length=100, blank=True, verbose_name="说话人")
     is_narrator = models.BooleanField(default=True, verbose_name="是否旁白")
 
-    # 情感信息（跟着对白，不是角色）
+    # 情感信息（仅对话有，旁白为null）
     emotion = models.CharField(
         max_length=20,
         choices=EmotionType.choices,
@@ -104,41 +110,41 @@ class Paragraph(models.Model):
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="创建时间")
 
     class Meta:
-        db_table = "paragraphs"
-        verbose_name = "段落"
-        verbose_name_plural = "段落列表"
-        ordering = ["chapter", "paragraph_index"]
+        db_table = "sentences"
+        verbose_name = "句子"
+        verbose_name_plural = "句子列表"
+        ordering = ["chapter", "sentence_index"]
         indexes = [
-            models.Index(fields=["chapter", "paragraph_index"]),
-            models.Index(fields=["paragraph_type"]),
+            models.Index(fields=["chapter", "sentence_index"]),
+            models.Index(fields=["sentence_type"]),
             models.Index(fields=["emotion"]),
             models.Index(fields=["speaker"]),
         ]
         constraints = [
             models.UniqueConstraint(
-                fields=["chapter", "paragraph_index"],
-                name="uq_chapter_paragraph"
+                fields=["chapter", "sentence_index"],
+                name="uq_chapter_sentence"
             )
         ]
 
     def __str__(self):
         speaker = self.speaker or "旁白"
         text_preview = self.text[:30] if self.text else ""
-        return f"第{self.paragraph_index}段 [{speaker}]: {text_preview}..."
+        return f"第{self.sentence_index}句 [{speaker}]: {text_preview}..."
 
     @classmethod
-    def from_dict(cls, chapter, data: dict) -> "Paragraph":
+    def from_dict(cls, chapter, data: dict) -> "Sentence":
         """
-        从分析结果字典创建 Paragraph 实例
+        从分析结果字典创建 Sentence 实例
 
-        解析 DeepSeek 返回的段落 dict，映射到 Paragraph 模型字段。
+        解析 DeepSeek 返回的句子 dict，映射到 Sentence 模型字段。
 
         Args:
             chapter: Chapter 实例
-            data: 段落字典，包含 paragraph_index, text, type, speaker, emotion 等
+            data: 句子字典，包含 sentence_index, text, type, speaker, emotion 等
 
         Returns:
-            Paragraph: 未保存的 Paragraph 实例
+            Sentence: 未保存的 Sentence 实例
         """
         # 解析 emotion 字段（格式：情感_强度，如 "愤怒_强"）
         emotion_raw = data.get("emotion") or ""
@@ -151,8 +157,11 @@ class Paragraph(models.Model):
         elif emotion_raw:
             emotion = emotion_raw.strip()
 
-        # 确定段落类型
-        para_type = data.get("type", "narration")
+        # 确定句子类型（兼容 paragraph_index 和 sentence_index）
+        sent_type = data.get("type", "narration")
+        # 兼容旧结构：mixed 降级为 narration
+        if sent_type == "mixed":
+            sent_type = "narration"
 
         # 确定说话人及是否旁白
         speaker = data.get("speaker", "") or ""
@@ -165,11 +174,14 @@ class Paragraph(models.Model):
         is_inner_thought = "内心独白" in markers
         is_system_prompt = "系统提示" in markers
 
+        # 获取句子索引（兼容新旧结构）
+        sentence_index = data.get("sentence_index", 0) or data.get("paragraph_index", 0) or 0
+
         return cls(
             chapter=chapter,
-            paragraph_index=data.get("paragraph_index", 0),
+            sentence_index=sentence_index,
             text=data.get("text", ""),
-            paragraph_type=para_type,
+            sentence_type=sent_type,
             speaker=speaker,
             is_narrator=is_narrator,
             emotion=emotion or None,
@@ -184,28 +196,28 @@ class Paragraph(models.Model):
         )
 
     @classmethod
-    def save_chapter_paragraphs(cls, chapter, paragraphs_data: list) -> list["Paragraph"]:
+    def save_chapter_sentences(cls, chapter, sentences_data: list) -> list["Sentence"]:
         """
-        批量保存章节段落
+        批量保存章节句子
 
-        删除章节原有段落，根据分析结果批量创建新段落。
+        删除章节原有句子，根据分析结果批量创建新句子。
 
         Args:
             chapter: Chapter 实例
-            paragraphs_data: 段落字典列表
+            sentences_data: 句子字典列表
 
         Returns:
-            list[Paragraph]: 创建的 Paragraph 实例列表
+            list[Sentence]: 创建的 Sentence 实例列表
         """
-        # 删除旧段落
+        # 删除旧句子
         cls.objects.filter(chapter=chapter).delete()
 
-        # 创建新段落
+        # 创建新句子
         instances = []
-        for data in paragraphs_data:
-            para = cls.from_dict(chapter, data)
-            para.save()
-            instances.append(para)
+        for data in sentences_data:
+            sent = cls.from_dict(chapter, data)
+            sent.save()
+            instances.append(sent)
 
         return instances
 
@@ -221,10 +233,10 @@ class Paragraph(models.Model):
         return {
             "id": self.id,
             "chapter_id": self.chapter_id,
-            "paragraph_index": self.paragraph_index,
+            "sentence_index": self.sentence_index,
             "text": self.text,
-            "type": self.paragraph_type,
-            "type_display": self.get_paragraph_type_display(),
+            "type": self.sentence_type,
+            "type_display": self.get_sentence_type_display(),
             "speaker": self.speaker,
             "is_narrator": self.is_narrator,
             "emotion": self.emotion,

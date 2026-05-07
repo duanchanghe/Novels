@@ -141,7 +141,7 @@ def _parse_deepseek_response(content: str) -> dict:
 
     # 策略4：尝试修复格式错误的 JSON
     fixed_result = _fix_malformed_json(json_match.group(1) if json_match else content)
-    if fixed_result and fixed_result.get("paragraphs"):
+    if fixed_result and (fixed_result.get("sentences") or fixed_result.get("paragraphs")):
         return fixed_result
 
     # 策略5：最后的尝试 - 查找任何看起来像 JSON 对象的内容
@@ -150,13 +150,13 @@ def _parse_deepseek_response(content: str) -> dict:
     for potential_json in all_json_matches:
         try:
             result = json.loads(potential_json)
-            if isinstance(result, dict) and ("paragraphs" in result or "characters" in result):
+            if isinstance(result, dict) and ("sentences" in result or "paragraphs" in result or "characters" in result):
                 return result
         except json.JSONDecodeError:
             continue
 
     # 所有策略都失败，返回包含原始内容的响应
-    return {"text": content, "paragraphs": []}
+    return {"text": content, "sentences": [], "paragraphs": []}
 
 
 def _fix_malformed_json(json_str: str) -> dict:
@@ -534,88 +534,85 @@ class DeepSeekAnalyzerService:
 {text}"""
 
     # ===========================================
-    # 综合分析 Prompt（简化版，单次调用完成）
+    # 综合分析 Prompt（句子级拆分版 - 严格区分对话与旁白）
     # ===========================================
-    FULL_ANALYSIS_PROMPT = """你是有声书文本分析专家。请对以下小说文本进行全面分析。
+    FULL_ANALYSIS_PROMPT = """你是有声书文本分析专家。请对以下小说文本进行全面分析，**严格区分对话与旁白**。
+
+【核心原则】
+1. **句子级拆分**：每个句子独立输出，不要将对话和旁白混在同一段落
+2. **说话人必须明确**：
+   - 对话内容 → 标注具体角色名（如"张三"、"李四"）
+   - 旁白/叙述/描写 → 标注"旁白"
+3. **绝对禁止**：将角色对话标注为旁白音色
 
 【已知角色】（如已知）
 {role_list}
 
 【分析任务】
-1. 按段落编号
-2. 判断段落类型（旁白/对话/混合）
-3. 识别说话人：每段对话的说话者和被提及者，注意不同角色对同一人可能用不同称呼（如张三：A叫"张兄"、B叫"三哥"、C叫"三弟"、D直呼"张三"），全部合并到统一角色名下
-4. 判断对话段落的情感（平静/高兴/悲伤/愤怒/紧张/惊讶/温柔/严肃/冷漠/嘲讽）及强度（弱/中/强）
-5. 识别多音字并给出读音
-6. 混合段落拆分（旁白+对话拆分为独立段落）
-7. 识别特殊标记（古文/诗词/内心独白/系统提示）
-8. 推断角色性别、年龄段（child/youth/adult/elderly）、性格特征、说话风格
+1. **按句子拆分**：每个句子独立一个条目
+2. **判断句子类型**：
+   - `dialogue`：直接引用的对话，必须有说话人
+   - `narration`：旁白叙述、心理描写、动作描写
+3. **识别说话人**：
+   - 对话句子 → 识别说话者（参考已知角色）
+   - 旁白句子 → speaker 固定为 "旁白"
+4. **情感标注**：仅对话句子需要情感，旁白句子 emotion 为 null
+5. **多音字消歧**
+6. **识别特殊标记**（古文/诗词/内心独白/系统提示）
+
+【混合段落处理（关键）】
+
+❌ 错误示例（错误地混合在一起）：
+```json
+{"type": "mixed", "text": "她叹了口气说："算了，不说了。", "speaker": "旁白"}
+```
+
+✅ 正确示例（严格拆分）：
+```json
+[
+  {"type": "narration", "text": "她叹了口气说：", "speaker": "旁白"},
+  {"type": "dialogue", "text": "算了，不说了。", "speaker": "她", "emotion": "悲伤_中"}
+]
+```
+
+✅ 更复杂示例（旁白→对话→旁白）：
+原文："张三静静地坐在窗边，轻声说道："这里的夜色真美。"他望着远方，眼中满是回忆。"
+拆分：
+```json
+[
+  {"type": "narration", "text": "张三静静地坐在窗边，轻声说道：", "speaker": "旁白"},
+  {"type": "dialogue", "text": "这里的夜色真美。", "speaker": "张三", "emotion": "平静_medium"},
+  {"type": "narration", "text": "他望着远方，眼中满是回忆。", "speaker": "旁白"}
+]
+```
 
 【角色性格分析方法】
 对每个角色，通过以下线索综合推断性格和说话风格：
 
-（1）分析对白内容特征：
-- 用词习惯：书面语还是口语？文雅还是粗俗？敬语多还是命令多？
-- 句式特点：陈述多还是反问多？简洁还是啰嗦？
-- 语气助词：是否常用"啊、呀、嘛、呢、罢了"等？
-- 口头禅：是否有固定口头禅或常用语？
-- 话题偏好：常谈论什么主题？
+1. **对白内容特征**：用词习惯、句式特点、口头禅
+2. **情感表现**：情绪波动范围、表达方式
+3. **人际关系**：对不同对象说话方式是否不同
 
-（2）分析情感表现：
-- 情感波动范围：情绪变化大还是稳定？
-- 常出现的情绪类型有哪些？
-- 情绪表达是直接外露还是压抑内敛？
-
-（3）分析人际关系：
-- 对不同对象（上级/平级/下级）说话方式是否不同？
-- 是否尊重他人？是否傲慢？
-- 用称呼反映关系
-
-（4）性格特征描述建议：
-- 外向/内向、热情/冷淡、冲动/稳重、自信/自卑等
-- 通过具体行为或引用来支撑判断
-
-（5）说话风格描述建议：
-- 语速（快/慢/适中）、音量（高/低/适中）
-- 语调变化特点（平稳/抑扬顿挫）
-- 是否常用修辞、歇后语、方言等
-
-【重要】情感标注规则：
-- 情感只标注在【对话段落】上，旁白段落无情感
-- 每个对话段落只能有一个情感
-- 格式："情感_强度"，如"愤怒_强"、"温柔_弱"
-
-【混合段落处理规则（关键）】
-对于旁白+对话混合的段落（如"她嘶哑地吼道："你疯了！""），采用以下策略：
-
-策略A — 若前后情感一致，拆为独立段落：
-  {{"type": "narration", "text": "她嘶哑地吼道："}},
-  {{"type": "dialogue", "text": "你疯了！", "speaker": "她", "emotion": "愤怒_强"}}
-
-策略B — 若旁白描写了语音特征（嘶哑、压低声音、颤抖等），拆分时**对话段落需承接旁白的情感强度**，
-  同时将语音特征写入 special_markers 供 TTS 参考：
-  {{"type": "mixed", ..., "voice_context": "嘶哑"}},
-  {{"type": "dialogue", ..., "emotion": "愤怒_强", "voice_context": "嘶哑"}}
-
-策略C — 复杂混合句（旁白→对话→旁白→对话），按语义块拆分为多个独立段落。
-
-目标：确保 TTS 合成时，对话的情感强度和语音特征与旁白描写一致。
+【重要】
+- **每个对话必须标注说话人角色名**，不允许出现无说话人的对话
+- **旁白段落 speaker 只能是"旁白"**
+- **情感只标注在对话上**
 
 【中文网络小说特色】
-- 网络小说特有称呼：道兄、前辈、宗主、仙尊、魔帝等
-- 特殊格式：[系统提示]、（心想）、*注释*
-- 玄幻元素：灵根、筑基、金丹、元婴等修炼术语保持原样
+- 识别玄幻/都市/仙侠特有格式
+- 识别内心独白：（心想）、（暗道）
+- 识别系统提示：[系统提示]、[任务发布]
 
 【输出格式】（严格 JSON）
 {{
-  "paragraphs": [
+  "sentences": [
     {{
-      "paragraph_index": 1,
-      "text": "原文",
-      "type": "narration|dialogue|mixed",
-      "speaker": "旁白|角色名",
-      "emotion": "情感_强度",  // 仅对话段落有，旁白为null
-      "voice_context": "嘶哑|低沉|颤抖|平静等",  // 从旁白提取的语音特征，TTS合成参考
+      "sentence_index": 1,
+      "text": "完整句子内容",
+      "type": "dialogue|narration",
+      "speaker": "旁白|角色名",  // dialogue 必须有具体角色名，narration 固定为"旁白"
+      "emotion": "情感_强度|null",  // dialogue 需标注，narration 为 null
+      "voice_context": "嘶哑|低沉|null",  // 从旁白提取的语音特征（如有）
       "polyphone_fixes": [["字","拼音"]],
       "special_markers": ["古文朗读"]  // 可选
     }}
@@ -627,16 +624,17 @@ class DeepSeekAnalyzerService:
       "gender": "male|female|unknown",
       "role_type": "主角|配角|反派|旁白",
       "dialogue_count": 5,
-      "description": "角色外貌、身份、背景介绍（简洁明确）",
-      "personality": "性格特征（通过对白和情节推断，如急躁易怒、温婉贤淑、老谋深算等）",
-      "speech_style": "说话风格（基于对白分析，如语速快/慢、用词文雅/粗俗、语气强势/温和、口头禅等）",
-      "voice_description": "适合该角色的声音描述（如'年轻清脆女声'、'低沉威严男声'）",
+      "description": "角色外貌、身份、背景介绍",
+      "personality": "性格特征（急躁易怒、温婉贤淑、老谋深算等）",
+      "speech_style": "说话风格（语速快/慢、用词文雅/粗俗、语气强势/温和）",
+      "voice_description": "适合该角色的声音描述（如'低沉磁性男声'、'清脆活泼女声'）",
       "age_group": "child|youth|adult|elderly"
     }}
   ],
   "statistics": {{
-    "total_paragraphs": 10,
+    "total_sentences": 10,
     "total_dialogues": 5,
+    "total_narrations": 5,
     "total_characters": 3
   }}
 }}
@@ -891,18 +889,19 @@ class DeepSeekAnalyzerService:
 
         Returns:
             dict: 分析结果，包含：
-                - paragraphs: 段落分析列表
+                - sentences: 句子分析列表（主要）
+                - paragraphs: 段落分析列表（向后兼容）
                 - characters: 角色列表
-                - token_usage: Token 使用统计
         """
         global _cost_stats
-        
+
         if not self.api_key:
             raise DeepSeekApiError("DeepSeek API Key 未配置")
 
         # 边界检查
         if not text or not text.strip():
             return {
+                "sentences": [],
                 "paragraphs": [],
                 "characters": [],
             }
@@ -925,9 +924,12 @@ class DeepSeekAnalyzerService:
 
             # 确保 result 结构完整
             if result is None:
-                result = {"paragraphs": [], "characters": []}
+                result = {"sentences": [], "paragraphs": [], "characters": []}
+            if "sentences" not in result:
+                # 兼容旧结构：paragraphs → sentences
+                result["sentences"] = result.get("paragraphs", [])
             if "paragraphs" not in result:
-                result["paragraphs"] = []
+                result["paragraphs"] = result.get("sentences", [])
             if "characters" not in result:
                 result["characters"] = []
 
@@ -1248,6 +1250,9 @@ class DeepSeekAnalyzerService:
         合并角色别名
 
         将同一角色的不同称呼合并为统一名称。
+        支持新旧两种结构：
+        - 新结构：sentences（句子级）
+        - 旧结构：paragraphs（段落级）
 
         Args:
             result: 分析结果
@@ -1274,12 +1279,17 @@ class DeepSeekAnalyzerService:
                 normalized_alias = self._normalize_speaker(alias)
                 name_mapping[alias] = normalized_alias
 
-        # 第二遍：合并段落中的角色
-        for para in result.get("paragraphs", []):
-            speaker = para.get("speaker")
+        # 判断使用哪种结构
+        sentences = result.get("sentences", [])
+        paragraphs = result.get("paragraphs", [])
+        items = sentences if sentences else paragraphs
+
+        # 第二遍：合并句子/段落中的角色
+        for item in items:
+            speaker = item.get("speaker")
             if speaker and speaker not in ("旁白", "未识别"):
-                para["original_speaker"] = speaker
-                para["speaker"] = name_mapping.get(speaker, self._normalize_speaker(speaker))
+                item["original_speaker"] = speaker
+                item["speaker"] = name_mapping.get(speaker, self._normalize_speaker(speaker))
 
         # 第三遍：合并角色列表
         merged_characters = {}
@@ -1342,6 +1352,11 @@ class DeepSeekAnalyzerService:
             final_characters.append(char_data)
 
         result["characters"] = final_characters
+
+        # 确保结果中有 sentences 字段（兼容旧代码）
+        if sentences and "paragraphs" not in result:
+            result["paragraphs"] = sentences
+
         return result
 
     @staticmethod
@@ -1354,12 +1369,45 @@ class DeepSeekAnalyzerService:
         2. 将旁白和对话拆分为独立段落
         3. 对话继承旁白的情感强度
 
+        支持新旧两种结构：
+        - 新结构：sentences（句子级，已由 AI 严格拆分）
+        - 旧结构：paragraphs（段落级，需要后处理拆分）
+
         例：
           她说："你疯了！"  →  她说： | 你疯了！
           她听了，直直地立在他面前，连嗓音都变了，变得嘶哑而凶狠，她说："见鬼了..."
             → 旁白(嗓音嘶哑而凶狠) + 对话(继承凶狠)
         """
+        # 判断使用哪种结构（新结构 sentences 优先级更高）
+        sentences = result.get("sentences", [])
         paragraphs = result.get("paragraphs", [])
+        items = sentences if sentences else paragraphs
+
+        # 新结构已经是句子级拆分，只需验证并整理
+        if sentences:
+            new_items = []
+            for item in items:
+                item_type = item.get("type", "narration")
+                text = item.get("text", "")
+                speaker = item.get("speaker", "旁白")
+
+                # 验证说话人
+                if item_type == "dialogue" and speaker == "旁白":
+                    # 对话类型不能是旁白说话人，可能是 AI 漏识别
+                    logger.warning(f"对话段落 speaker 为旁白，跳过: {text[:50]}...")
+                    continue
+
+                new_items.append(item)
+
+            # 重新编号
+            for i, item in enumerate(new_items):
+                item["sentence_index"] = i + 1
+
+            result["sentences"] = new_items
+            result["paragraphs"] = new_items  # 保持兼容
+            return result
+
+        # 旧结构：继续原有逻辑
         new_paragraphs = []
 
         # 语音特征模式（从旁白中提取）
@@ -1497,6 +1545,7 @@ class DeepSeekAnalyzerService:
         # 重新编号
         for i, p in enumerate(new_paragraphs):
             p["paragraph_index"] = i + 1
+            p["sentence_index"] = i + 1  # 保持兼容
 
         result["paragraphs"] = new_paragraphs
         return result
@@ -1516,7 +1565,7 @@ class DeepSeekAnalyzerService:
             raise DeepSeekApiError("DeepSeek API Key 未配置")
 
         if not text or not text.strip():
-            return {"paragraphs": [], "characters": []}
+            return {"sentences": [], "paragraphs": [], "characters": []}
 
         # 检查缓存
         if self.use_cache:
@@ -1531,15 +1580,18 @@ class DeepSeekAnalyzerService:
             result = self._full_analysis_sync(text, role_list)
 
             if result is None:
-                result = {"paragraphs": [], "characters": []}
+                result = {"sentences": [], "paragraphs": [], "characters": []}
+            # 兼容新旧结构
+            if "sentences" not in result:
+                result["sentences"] = result.get("paragraphs", [])
             if "paragraphs" not in result:
-                result["paragraphs"] = []
+                result["paragraphs"] = result.get("sentences", [])
             if "characters" not in result:
                 result["characters"] = []
 
             result = self._merge_role_aliases(result)
 
-            # 后处理：将 mixed 类型的段落拆分为 narration + dialogue
+            # 后处理：将 mixed 类型的句子拆分为 narration + dialogue
             result = self._split_mixed_paragraphs(result)
 
             if self.use_cache:

@@ -52,18 +52,25 @@ class VoiceMapperService:
         """
         return self.role_map.get(role, DEFAULT_VOICE_CONFIG)
 
-    def get_voice_for_speaker(self, speaker: str) -> Dict[str, Any]:
+    def get_voice_for_speaker(
+        self,
+        speaker: str,
+        character_info: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
         """
         根据说话人名称智能获取音色配置
 
         支持多种匹配策略：
         1. 精确匹配 ROLE_VOICE_MAP（如"旁白"、"男主"、"仙尊"）
         2. 通过常见称呼推断（如"公子"→男声、"小姐"→女声）
-        3. 通过姓氏+称谓推断
-        4. 默认映射到通用男声
+        3. 通过角色特征描述推断（如"温柔"→gentle音色）
+        4. 为具体角色名生成唯一音色（确保不同角色有不同音色）
+        5. 通过姓氏+称谓推断
+        6. 默认映射到通用配置
 
         Args:
             speaker: 说话人名称（如"张三"、"旁白"、"林公子"）
+            character_info: 可选的额外角色信息，包含 personality、voice_description 等
 
         Returns:
             dict: 包含 voice_id/speed/pitch/emotion 的配置
@@ -80,7 +87,35 @@ class VoiceMapperService:
             if speaker.startswith(canonical_name) or canonical_name.startswith(speaker):
                 return config
 
-        # 策略3：通过关键词推断角色类型
+        # 策略3：基于角色特征描述选择音色
+        if character_info:
+            voice_desc = character_info.get("voice_description", "")
+            personality = character_info.get("personality", "")
+            combined_info = voice_desc + " " + personality
+
+            # 根据性格描述选择音色
+            if any(kw in combined_info for kw in ["温柔", "温润", "柔和", "gentle", "soft"]):
+                if character_info.get("gender") == "female":
+                    return self.role_map.get("女主", self.role_map.get("female", DEFAULT_VOICE_CONFIG))
+                else:
+                    return self.role_map.get("温柔男主", self.role_map.get("暖男", DEFAULT_VOICE_CONFIG))
+
+            if any(kw in combined_info for kw in ["霸道", "强势", "威严", "dominant"]):
+                return self.role_map.get("反派", self.role_map.get("male-deep", DEFAULT_VOICE_CONFIG))
+
+            if any(kw in combined_info for kw in ["活泼", "开朗", "俏皮", "energetic", "cheerful"]):
+                if character_info.get("gender") == "female":
+                    return self.role_map.get("少女", self.role_map.get("female-young", DEFAULT_VOICE_CONFIG))
+                else:
+                    return self.role_map.get("少年", self.role_map.get("male-young", DEFAULT_VOICE_CONFIG))
+
+            if any(kw in combined_info for kw in ["沉稳", "稳重", "成熟", "可靠", "steady"]):
+                return self.role_map.get("成熟男性", self.role_map.get("male-adult", DEFAULT_VOICE_CONFIG))
+
+            if any(kw in combined_info for kw in ["空灵", "仙气", "飘逸", " ethereal"]):
+                return self.role_map.get("仙子", self.role_map.get("仙女", DEFAULT_VOICE_CONFIG))
+
+        # 策略4：通过关键词推断角色类型
         speaker_lower = speaker.lower()
 
         # 女性关键词
@@ -113,7 +148,7 @@ class VoiceMapperService:
         if is_female and is_male:
             is_male = False
 
-        # 策略4：通过角色类型选择音色
+        # 策略5：通过角色类型选择音色
         if is_female:
             if is_child:
                 return self.role_map.get("孩童", self.role_map.get("少女", DEFAULT_VOICE_CONFIG))
@@ -129,7 +164,7 @@ class VoiceMapperService:
             else:
                 return self.role_map.get("男主", self.role_map.get("male", DEFAULT_VOICE_CONFIG))
 
-        # 策略5：通过常见姓氏推断（姓氏后加"某"可能是角色名）
+        # 策略6：通过常见姓氏推断（具体角色名需要唯一音色）
         common_surnames = {
             "张", "李", "王", "赵", "刘", "陈", "杨", "周", "吴", "郑",
             "孙", "马", "朱", "胡", "郭", "何", "高", "林", "罗", "梁",
@@ -144,18 +179,106 @@ class VoiceMapperService:
         }
 
         if len(speaker) >= 2 and speaker[0] in common_surnames:
-            # 姓氏开头 → 很可能是具体角色名，用通用男声（小说男主为主）
-            return self.role_map.get("男主", DEFAULT_VOICE_CONFIG)
+            # 姓氏开头 → 很可能是具体角色名，生成唯一音色
+            return self._generate_unique_voice_for_name(speaker, character_info)
 
-        # 策略6：英文角色名检查
+        # 策略7：英文角色名检查
         if speaker_lower in ("narrator", "narration", "description"):
             return self.role_map.get("narrator", DEFAULT_VOICE_CONFIG)
 
-        # 策略7：长度判断——2字及以上无名角色默认男主
+        # 策略8：其他2字及以上角色名，生成唯一音色
         if len(speaker) >= 2:
-            return self.role_map.get("男主", DEFAULT_VOICE_CONFIG)
+            return self._generate_unique_voice_for_name(speaker, character_info)
 
         return DEFAULT_VOICE_CONFIG
+
+    def _generate_unique_voice_for_name(
+        self,
+        name: str,
+        character_info: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
+        """
+        为具体角色名生成唯一音色配置
+
+        确保不同角色名获得不同的音色ID，创造角色间的音色区分度。
+        音色选择策略：
+        1. 如果有角色性别信息，按性别选择音色池
+        2. 如果有角色描述，使用描述辅助选择
+        3. 否则基于角色名哈希分配音色
+
+        Args:
+            name: 角色名称
+            character_info: 角色信息（可选）
+
+        Returns:
+            dict: 唯一的音色配置
+        """
+        import hashlib
+
+        # 根据性别或角色信息选择音色池
+        gender = character_info.get("gender") if character_info else None
+        voice_desc = character_info.get("voice_description", "") if character_info else ""
+        personality = character_info.get("personality", "") if character_info else ""
+
+        # 男性音色池（多个不同的音色）
+        male_voices = [
+            {"voice_id": VoiceID.MALE_QN_QINGSE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},      # 清澈青年
+            {"voice_id": VoiceID.MALE_QN_JINGYING, "speed": 1.0, "pitch": 0.05, "emotion": "neutral"}, # 精英青年
+            {"voice_id": VoiceID.MALE_QN_BADAO, "speed": 0.95, "pitch": 0.1, "emotion": "serious"},    # 霸道青年
+            {"voice_id": VoiceID.GENTLEMAN, "speed": 0.95, "pitch": -0.05, "emotion": "gentle"},       # 温润男声
+            {"voice_id": VoiceID.MALE_ANCHOR, "speed": 1.0, "pitch": 0, "emotion": "neutral"},          # 播报男声
+            {"voice_id": VoiceID.RELIABLE_EXECUTIVE, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"}, # 沉稳高管
+        ]
+
+        # 女性音色池（多个不同的音色）
+        female_voices = [
+            {"voice_id": VoiceID.FEMALE_TIANMEI, "speed": 1.0, "pitch": 0.05, "emotion": "happy"},    # 甜美女声
+            {"voice_id": VoiceID.FEMALE_SHAON, "speed": 1.05, "pitch": 0.1, "emotion": "happy"},      # 少女音色
+            {"voice_id": VoiceID.FEMALE_YUJIE, "speed": 1.0, "pitch": 0, "emotion": "neutral"},        # 御姐音色
+            {"voice_id": VoiceID.FEMALE_CHENGSHU, "speed": 0.95, "pitch": -0.05, "emotion": "neutral"},# 成熟女性
+            {"voice_id": VoiceID.WARM_BESTIE, "speed": 1.0, "pitch": 0, "emotion": "gentle"},          # 温暖闺蜜
+            {"voice_id": VoiceID.KIND_ELDER, "speed": 0.9, "pitch": -0.1, "emotion": "neutral"},        # 花甲奶奶
+        ]
+
+        # 根据角色描述微调音色选择
+        combined_info = voice_desc + " " + personality
+
+        # 如果描述中有明确的音色倾向
+        if any(kw in combined_info for kw in ["清澈", "阳光", "青春", "fresh"]):
+            if gender == "female":
+                return female_voices[1]  # 少女音色
+            else:
+                return male_voices[0]  # 清澈青年
+
+        if any(kw in combined_info for kw in ["磁性", "低沉", "成熟", "mature", "deep"]):
+            if gender == "female":
+                return female_voices[3]  # 成熟女性
+            else:
+                return male_voices[3]  # 温润男声
+
+        if any(kw in combined_info for kw in ["甜美", "温柔", "可爱", "sweet", "gentle"]):
+            if gender == "female":
+                return female_voices[0]  # 甜美女声
+            else:
+                return male_voices[3]  # 温润男声
+
+        if any(kw in combined_info for kw in ["霸道", "强势", "威严", "dominant", "authoritative"]):
+            return male_voices[2]  # 霸道青年
+
+        # 使用角色名哈希来选择音色（确保同一角色名总是获得相同音色）
+        name_hash = int(hashlib.md5(name.encode('utf-8')).hexdigest()[:8], 16)
+
+        if gender == "female":
+            voice_index = name_hash % len(female_voices)
+            return female_voices[voice_index]
+        elif gender == "male":
+            voice_index = name_hash % len(male_voices)
+            return male_voices[voice_index]
+        else:
+            # 未知性别，混合池
+            all_voices = male_voices + female_voices
+            voice_index = name_hash % len(all_voices)
+            return all_voices[voice_index]
 
     def get_emotion_params(self, emotion: str) -> Dict[str, Any]:
         """

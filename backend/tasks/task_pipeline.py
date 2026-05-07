@@ -155,34 +155,34 @@ def _update_book_progress(book_id: int, message: str = None):
         logger.error(f"更新书籍进度失败: {e}")
 
 
-def _ensure_paragraphs(chapter, paragraphs: List) -> List:
+def _ensure_sentences(chapter, sentences: List = None) -> List:
     """
-    确保章节有段落数据：优先使用 Paragraph 模型，否则从清洗文本拆分。
+    确保章节有句子数据：优先使用 Sentence 模型，否则从清洗文本拆分。
 
-    返回段落 dict 列表（兼容旧调用方）。
+    返回句子 dict 列表（兼容旧调用方）。
 
     Args:
         chapter: Chapter 对象
-        paragraphs: 已有段落列表（可能为空）
+        sentences: 已有句子列表（可能为空）
 
     Returns:
-        list: 段落 dict 列表（通过 Paragraph.to_dict 转换）
+        list: 句子 dict 列表（通过 Sentence.to_dict 转换）
     """
-    # 优先从 Paragraph 模型读取
-    from core.models.paragraph import Paragraph
-    db_paragraphs = list(Paragraph.objects.filter(chapter=chapter).order_by("paragraph_index"))
-    if db_paragraphs:
-        return [p.to_dict() for p in db_paragraphs]
+    # 优先从 Sentence 模型读取
+    from core.models.sentence import Sentence
+    db_sentences = list(Sentence.objects.filter(chapter=chapter).order_by("sentence_index"))
+    if db_sentences:
+        return [s.to_dict() for s in db_sentences]
 
     # 有传入的 dict 数据，保存到模型后返回
-    if paragraphs:
-        Paragraph.save_chapter_paragraphs(chapter, paragraphs)
-        return paragraphs
+    if sentences:
+        Sentence.save_chapter_sentences(chapter, sentences)
+        return sentences
 
     chapter_id = chapter.id
     chapter_index = chapter.chapter_index
     book_id = chapter.book_id
-    logger.warning(f"[Chapter {chapter_id}] 分析结果无段落，从清洗文本拆分")
+    logger.warning(f"[Chapter {chapter_id}] 分析结果无句子，从清洗文本拆分")
 
     full_text = ""
     if chapter.cleaned_text and isinstance(chapter.cleaned_text, str) and chapter.cleaned_text.startswith("chapters/"):
@@ -201,26 +201,26 @@ def _ensure_paragraphs(chapter, paragraphs: List) -> List:
 
     if full_text and len(full_text.strip()) > 10:
         import re
-        sentences = re.split(r'(?<=[。！？！\.\!\?\n])', full_text)
-        sentences = [s.strip() for s in sentences if s.strip()]
+        sentences_list = re.split(r'(?<=[。！？！\.\!\?\n])', full_text)
+        sentences_list = [s.strip() for s in sentences_list if s.strip()]
         merged = []
-        for s in sentences:
+        for s in sentences_list:
             if merged and len(s) < 15:
                 merged[-1] = merged[-1] + s
             else:
                 merged.append(s)
-        paragraphs = [
-            {"text": s, "speaker": "旁白", "emotion": "neutral"}
+        sentences = [
+            {"text": s, "speaker": "旁白", "type": "narration", "emotion": None}
             for s in merged if len(s) > 5
         ]
-        logger.info(f"[Chapter {chapter_id}] 从清洗文本拆分了 {len(paragraphs)} 个段落")
+        logger.info(f"[Chapter {chapter_id}] 从清洗文本拆分了 {len(sentences)} 个句子")
     else:
-        paragraphs = [{"text": "本章内容暂时无法处理", "speaker": "旁白", "emotion": "neutral"}]
+        sentences = [{"text": "本章内容暂时无法处理", "speaker": "旁白", "type": "narration", "emotion": None}]
 
-    # 保存到 Paragraph 模型
-    Paragraph.save_chapter_paragraphs(chapter, paragraphs)
-    logger.info(f"[Chapter {chapter_id}] 已保存 {len(paragraphs)} 个段落到 Paragraph 模型")
-    return paragraphs
+    # 保存到 Sentence 模型
+    Sentence.save_chapter_sentences(chapter, sentences)
+    logger.info(f"[Chapter {chapter_id}] 已保存 {len(sentences)} 个句子到 Sentence 模型")
+    return sentences
 
 
 def _trigger_next_chapter(chapter_id: int) -> None:
@@ -777,10 +777,10 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             if not text or len(text.strip()) < 10:
                 logger.warning(f"[Chapter {chapter_id}] 文本内容过短，跳过分析")
                 chapter.status = ChapterStatus.ANALYZED
-                chapter.analysis_result = {"paragraphs": [], "characters": []}
-                # 清空段落模型
-                from core.models.paragraph import Paragraph
-                Paragraph.save_chapter_paragraphs(chapter, [])
+                chapter.analysis_result = {"sentences": [], "paragraphs": [], "characters": []}
+                # 清空句子模型
+                from core.models.sentence import Sentence
+                Sentence.save_chapter_sentences(chapter, [])
                 db.commit()
                 return {
                     "chapter_id": chapter_id,
@@ -832,14 +832,14 @@ def analyze_chapter(self, chapter_id: int) -> Dict[str, Any]:
             logger.info(f"[Chapter {chapter_id}] 开始调用 DeepSeek 分析器，文本长度: {len(text)}")
             analyzer = DeepSeekAnalyzerService()
             result = analyzer.analyze_chapter(text, role_list=role_list)
-            logger.info(f"[Chapter {chapter_id}] DeepSeek 分析返回: 段落={len(result.get('paragraphs',[]))}, 角色={len(result.get('characters',[]))}")
+            sentences_data = result.get("sentences", result.get("paragraphs", []))
+            logger.info(f"[Chapter {chapter_id}] DeepSeek 分析返回: 句子={len(sentences_data)}, 角色={len(result.get('characters',[]))}")
 
-            # ── 保存段落到 Paragraph 模型 ──
-            from core.models.paragraph import Paragraph
-            paragraphs_data = result.get("paragraphs", [])
-            Paragraph.save_chapter_paragraphs(chapter, paragraphs_data)
+            # ── 保存句子到 Sentence 模型 ──
+            from core.models.sentence import Sentence
+            Sentence.save_chapter_sentences(chapter, sentences_data)
             logger.info(
-                f"[Chapter {chapter_id}] 已保存 {len(paragraphs_data)} 个段落到 Paragraph 模型"
+                f"[Chapter {chapter_id}] 已保存 {len(sentences_data)} 个句子到 Sentence 模型"
             )
 
             # ── 保存角色到 Character 模型 ──
@@ -920,27 +920,28 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
             raise ValueError(f"章节不存在: {chapter_id}")
 
         try:
-            # ── 优先从 Paragraph 模型读取段落 ──
-            from core.models.paragraph import Paragraph as ParagraphModel
-            db_paragraphs = list(
-                ParagraphModel.objects.filter(chapter_id=chapter_id)
-                .order_by("paragraph_index")
+            # ── 优先从 Sentence 模型读取句子 ──
+            from core.models.sentence import Sentence
+            db_sentences = list(
+                Sentence.objects.filter(chapter_id=chapter_id)
+                .order_by("sentence_index")
             )
-            if db_paragraphs:
-                paragraphs = [p.to_dict() for p in db_paragraphs]
+            sentences = None
+            if db_sentences:
+                sentences = [s.to_dict() for s in db_sentences]
                 logger.info(
-                    f"[Chapter {chapter_id}] 从 Paragraph 模型读取 {len(paragraphs)} 个段落"
+                    f"[Chapter {chapter_id}] 从 Sentence 模型读取 {len(sentences)} 个句子"
                 )
             else:
                 # 回退：从 analysis_result JSON 读取
                 analysis = chapter.analysis_result or {}
-                paragraphs = analysis.get("paragraphs", [])
+                sentences = analysis.get("sentences", analysis.get("paragraphs", []))
                 logger.info(
-                    f"[Chapter {chapter_id}] 从 analysis_result 读取 {len(paragraphs)} 个段落"
+                    f"[Chapter {chapter_id}] 从 analysis_result 读取 {len(sentences)} 个句子"
                 )
 
-            # 如果没有段落，尝试从完整清洗文本生成
-            paragraphs = _ensure_paragraphs(chapter, paragraphs)
+            # 如果没有句子，尝试从完整清洗文本生成
+            sentences = _ensure_sentences(chapter, sentences)
 
             # 读取 MinIO 统一角色-音色映射（新流程生成）
             storage = get_storage_service()
@@ -952,8 +953,8 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
 
             # 构建说话人→音色缓存（统一映射优先，智能推断兜底）
             speaker_cache = {}
-            for para in paragraphs:
-                speaker = para.get("speaker", "") or para.get("role", "旁白")
+            for sent in sentences:
+                speaker = sent.get("speaker", "") or sent.get("role", "旁白")
                 if speaker and speaker not in speaker_cache:
                     if speaker in voice_mapping:
                         speaker_cache[speaker] = voice_mapping[speaker]
@@ -961,8 +962,8 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
                         speaker_cache[speaker] = voice_mapper.get_voice_for_speaker(speaker)
 
             segments_created = 0
-            for idx, para in enumerate(paragraphs):
-                speaker = para.get("speaker", "") or para.get("role", "旁白")
+            for idx, sent in enumerate(sentences):
+                speaker = sent.get("speaker", "") or sent.get("role", "旁白")
                 vc = speaker_cache.get(speaker, voice_mapper.get_voice_for_speaker(speaker))
 
                 if speaker not in ("旁白", "narrator", "未识别", "unknown"):
@@ -973,9 +974,9 @@ def create_segments(self, chapter_id: int) -> Dict[str, Any]:
                 segment = AudioSegmentModel(
                     chapter_id=chapter_id,
                     segment_index=idx,
-                    text_content=para.get("text", ""),
+                    text_content=sent.get("text", ""),
                     role=speaker,
-                    emotion=para.get("emotion", "neutral"),
+                    emotion=sent.get("emotion", "neutral"),
                     voice_id=vc.get("voice_id", VoiceID.MALE_QN_QINGSE),
                     speed=vc.get("speed", 1.0),
                     status=SegmentStatus.PENDING,
@@ -1646,10 +1647,10 @@ def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
                 if not text or len(text.strip()) < 10:
                     logger.warning(f"[Chapter {chapter.id}] 文本过短，跳过分析")
                     chapter.status = ChapterStatus.ANALYZED
-                    chapter.analysis_result = {"paragraphs": [], "characters": []}
-                    # 清空段落模型
-                    from core.models.paragraph import Paragraph
-                    Paragraph.save_chapter_paragraphs(chapter, [])
+                    chapter.analysis_result = {"sentences": [], "paragraphs": [], "characters": []}
+                    # 清空句子模型
+                    from core.models.sentence import Sentence
+                    Sentence.save_chapter_sentences(chapter, [])
                     db.track_dirty(chapter)
                     db.commit()
                     analyzed_count += 1
@@ -1718,12 +1719,12 @@ def analyze_all_chapters(self, book_id: int) -> Dict[str, Any]:
                         if char.get("voice_description") and not cc["voice_description"]:
                             cc["voice_description"] = char["voice_description"]
 
-                # ── 保存段落到 Paragraph 模型 ──
-                from core.models.paragraph import Paragraph
-                paragraphs_data = result.get("paragraphs", [])
-                Paragraph.save_chapter_paragraphs(chapter, paragraphs_data)
+                # ── 保存句子到 Sentence 模型 ──
+                from core.models.sentence import Sentence
+                sentences_data = result.get("sentences", result.get("paragraphs", []))
+                Sentence.save_chapter_sentences(chapter, sentences_data)
                 logger.info(
-                    f"[Chapter {chapter.id}] 已保存 {len(paragraphs_data)} 个段落到 Paragraph 模型"
+                    f"[Chapter {chapter.id}] 已保存 {len(sentences_data)} 个句子到 Sentence 模型"
                 )
 
                 # ── 保存角色到 Character 模型 ──

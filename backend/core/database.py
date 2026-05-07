@@ -44,6 +44,7 @@ class DjangoCompatDB:
         """添加并保存 Django 模型对象"""
         if hasattr(obj, 'save') and callable(obj.save):
             obj.save()
+        self._dirty_objects.add(obj)
     
     def track_dirty(self, obj):
         """追踪被修改的对象"""
@@ -129,4 +130,11 @@ def get_db_context():
         with get_db_context() as db:
             book = db.query(Book).filter(id=1).first()
     """
-    yield _db
+    # Create a fresh tracker for each context
+    original_dirty = _db._dirty_objects.copy() if hasattr(_db, '_dirty_objects') else set()
+    _db._dirty_objects = set()
+    try:
+        yield _db
+        _db.commit()
+    finally:
+        _db._dirty_objects = original_dirty
